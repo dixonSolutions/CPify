@@ -1,0 +1,44 @@
+{
+    "songs": [
+        {
+            "name": "Heat Waves",
+            "artist": "Glass Animals",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_Glass-Animals-Heat-Waves-Official-Video_Media_mRD0-GxqHVo_001_1080p.mp4"
+        },
+        {
+            "name": "Empire State of Mind Part 2 broken down",
+            "artist": "Alicia Keys",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_Alicia-Keys-Empire-State-Of-Mind-Part-II_Media_LMKR7660TFg_001_720p.mp4"
+        },
+        {
+            "name": "Gangster's Paradise",
+            "artist": "Coolio",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_Coolio-Gangsta-s-Paradise-feat-L-V-Offic_Media_fPO76Jlnz6c_001_480p.mp4"
+        },
+        {
+            "name": "The Spectre",
+            "artist": "Alan Walker",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_Alan-Walker-The-Spectre_Media_wJnBTPUQS5A_001_1080p.mp4"
+        },
+        {
+            "name": "7 years",
+            "artist": "Lucas Graham",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_Lukas-Graham-7-Years-Official-Music-Vide_Media_LHCob76kigA_001_1080p.mp4"
+        },
+        {
+            "name": "Polish Cow",
+            "artist": "Drunk Guy",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_polish-cow-full-song_Media_Vy8moBcKVIM_001_360p (1).mp4"
+        },
+        {
+            "name": "Wild Things",
+            "artist": "Alessia Cara",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_Alessia-Cara-Wild-Things-Official-Video_Media_De30ET0dQpQ_001_1080p.mp4"
+        },
+        {
+            "name": "Cover Me In Sunshine Shower",
+            "artist": "Pink",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_P-NK-Willow-Sage-Hart-Cover-Me-In-Sunshi_Media_vGZhMIXH62M_001_1080p.mp4"
+        }
+    ]
+}

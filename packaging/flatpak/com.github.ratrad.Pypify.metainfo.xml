@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>com.github.ratrad.Pypify</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Pypify</name>
+  <summary>Offline video jukebox built with pygame</summary>
+  <description>
+    <p>Pypify lets you curate, play, and manage a video-backed music library offline.</p>
+  </description>
+  <launchable type="desktop-id">com.github.ratrad.Pypify.desktop</launchable>
+  <url type="homepage">https://github.com/ratrad/Pypify</url>
+  <provides>
+    <binary>pypify</binary>
+  </provides>
+</component>
+

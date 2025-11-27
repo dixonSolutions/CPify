@@ -1,0 +1,36 @@
+app-id: com.github.ratrad.Pypify
+runtime: org.freedesktop.Platform
+runtime-version: "23.08"
+sdk: org.freedesktop.Sdk
+command: pypify
+build-options:
+  build-args:
+    - --share=network
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=home
+  - --filesystem=xdg-download
+modules:
+  - name: pypify-runtime
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 packaging/flatpak/pypify.sh /app/bin/pypify
+      - install -Dm644 packaging/flatpak/com.github.ratrad.Pypify.desktop /app/share/applications/com.github.ratrad.Pypify.desktop
+      - install -Dm644 packaging/flatpak/com.github.ratrad.Pypify.metainfo.xml /app/share/metainfo/com.github.ratrad.Pypify.metainfo.xml
+      - install -Dm644 packaging/flatpak/com.github.ratrad.Pypify.svg /app/share/icons/hicolor/scalable/apps/com.github.ratrad.Pypify.svg
+      - install -d /app/pypify
+      - install -Dm644 main.py /app/pypify/main.py
+      - install -Dm644 song_data.json /app/pypify/song_data.json
+      - install -d /app/pypify/songs
+      - cp -R songs/. /app/pypify/songs/
+      - python3 -m venv /app/pypify/venv
+      - . /app/pypify/venv/bin/activate && pip install --no-cache-dir --upgrade pip
+      - . /app/pypify/venv/bin/activate && pip install --no-cache-dir pygame moviepy
+    sources:
+      - type: dir
+        path: ../..
+

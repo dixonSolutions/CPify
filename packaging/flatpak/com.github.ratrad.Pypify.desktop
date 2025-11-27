@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pypify
+Comment=Offline video jukebox built with pygame
+Exec=pypify
+Icon=com.github.ratrad.Pypify
+Categories=AudioVideo;Player;
+Terminal=false
+
