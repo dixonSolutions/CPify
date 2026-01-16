@@ -1431,7 +1431,7 @@ class PypifyApp:
         if self.add_form_mode == "edit":
             instructions = "Update the song details and press Save Changes."
         else:
-        instructions = "Enter the video path, song title, and artist, then submit."
+            instructions = "Enter the video path, song title, and artist, then submit."
         instructions_surface = self.card_body_font.render(instructions, True, MUTED_TEXT)
         instructions_rect = instructions_surface.get_rect(midtop=(form_rect.centerx, title_rect.bottom + 18))
         self.display.blit(instructions_surface, instructions_rect)
@@ -1643,7 +1643,7 @@ class PypifyApp:
         for candidate in path_candidates:
             try:
                 resolved = candidate.resolve(strict=False)
-        except OSError:
+            except OSError:
                 resolved = candidate
             if resolved.exists():
                 src_resolved = resolved
@@ -1683,7 +1683,7 @@ class PypifyApp:
         artist = artist_text or "Unknown Artist"
 
         songs_root = SONGS_DIR.resolve()
-            dest_path = src_resolved
+        dest_path = src_resolved
         copied_new_file = False
         if src_resolved.parent != songs_root:
             dest_path = songs_root / src_resolved.name
@@ -1766,7 +1766,7 @@ class PypifyApp:
                 "artist": updated_song.artist,
             }
             self.add_form_focus = 1
-                return
+            return
 
         try:
             new_song = Song(name=name, artist=artist, video_path=dest_path)
@@ -1775,7 +1775,7 @@ class PypifyApp:
             if dest_path != src_resolved and copied_new_file:
                 try:
                     if dest_path.exists():
-                    dest_path.unlink()
+                        dest_path.unlink()
                 except Exception:
                     pass
             message = str(exc)

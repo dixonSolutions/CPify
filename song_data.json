@@ -36,9 +36,14 @@
             "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_Alessia-Cara-Wild-Things-Official-Video_Media_De30ET0dQpQ_001_1080p.mp4"
         },
         {
-            "name": "Cover Me In Sunshine Shower",
+            "name": "Cover Me In Sunshine",
             "artist": "Pink",
             "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/YTDown.com_YouTube_P-NK-Willow-Sage-Hart-Cover-Me-In-Sunshi_Media_vGZhMIXH62M_001_1080p.mp4"
+        },
+        {   
+            "name": "Recording from 2025-11-27 11-21-47.897345",
+            "artist": "Unknown Artist",
+            "pathtovideo": "/var/home/ratrad/Projects/Other/Pypify/songs/Recording from 2025-11-27 11-21-47.897345.webm"
         }
     ]
 }

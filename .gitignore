@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Pypify legacy local media/data (do not commit)
+song_data.json
+songs/
+
+# C migration build outputs
+cprojectmigrate/build*/
+cprojectmigrate/subprojects/packagecache/
+
+# General build artifacts
+build/
+builddir/
+
