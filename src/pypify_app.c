@@ -10,7 +10,7 @@
 #include "sound_effects.h"
 #include "splash_screen.h"
 
-struct _PypifyApp {
+struct _CPifyApp {
   AdwApplication *app;
   AdwApplicationWindow *window;
   AdwToastOverlay *toast_overlay;
@@ -65,17 +65,17 @@ struct _PypifyApp {
 
   guint tick_id;
 
-  PypifyPlayer *player;
+  CPifyPlayer *player;
 };
 
 // Forward declarations
 static void on_player_eos(gpointer user_data);
-static void play_track_index(PypifyApp *p, gint track_index);
+static void play_track_index(CPifyApp *p, gint track_index);
 static void on_search_changed(GtkEditable *editable, gpointer user_data);
-static void open_folder_dialog(PypifyApp *p);
-static void switch_to_player_view(PypifyApp *p);
+static void open_folder_dialog(CPifyApp *p);
+static void switch_to_player_view(CPifyApp *p);
 
-static void switch_to_player_view(PypifyApp *p) {
+static void switch_to_player_view(CPifyApp *p) {
   if (!p || !p->content_stack) return;
   gtk_stack_set_visible_child_name(GTK_STACK(p->content_stack), "player");
   gtk_widget_set_visible(GTK_WIDGET(p->header_bar), TRUE);
@@ -85,35 +85,35 @@ static void switch_to_player_view(PypifyApp *p) {
 static gboolean g_from_splash = FALSE;
 
 static void on_splash_add_folder(gpointer user_data) {
-  PypifyApp *p = (PypifyApp *)user_data;
+  CPifyApp *p = (CPifyApp *)user_data;
   g_from_splash = TRUE;
   open_folder_dialog(p);
 }
 
-static void show_toast(PypifyApp *p, const gchar *message) {
+static void show_toast(CPifyApp *p, const gchar *message) {
   if (!p || !p->toast_overlay) return;
   AdwToast *toast = adw_toast_new(message);
   adw_toast_set_timeout(toast, 3);
   adw_toast_overlay_add_toast(p->toast_overlay, toast);
 }
 
-static void set_status(PypifyApp *p, const gchar *text) {
+static void set_status(CPifyApp *p, const gchar *text) {
   if (!p || !p->status_label) return;
   gtk_label_set_text(GTK_LABEL(p->status_label), text ? text : "");
 }
 
-static void update_play_button(PypifyApp *p) {
+static void update_play_button(CPifyApp *p) {
   if (!p || !p->play_pause_button) return;
   gtk_button_set_icon_name(GTK_BUTTON(p->play_pause_button), 
     p->is_playing ? "media-playback-pause-symbolic" : "media-playback-start-symbolic");
 }
 
-static gboolean get_shuffle(PypifyApp *p) {
+static gboolean get_shuffle(CPifyApp *p) {
   if (!p || !p->shuffle_toggle) return FALSE;
   return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->shuffle_toggle));
 }
 
-static gboolean get_repeat(PypifyApp *p) {
+static gboolean get_repeat(CPifyApp *p) {
   if (!p || !p->repeat_toggle) return FALSE;
   return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->repeat_toggle));
 }
@@ -126,17 +126,17 @@ static gchar *format_time_seconds(gdouble seconds) {
   return g_strdup_printf("%02d:%02d", mm, ss);
 }
 
-static guint visible_len(PypifyApp *p) {
+static guint visible_len(CPifyApp *p) {
   return (p && p->visible_tracks) ? p->visible_tracks->len : 0;
 }
 
-static gint visible_get_track_index(PypifyApp *p, guint visible_pos) {
+static gint visible_get_track_index(CPifyApp *p, guint visible_pos) {
   if (!p || !p->visible_tracks) return -1;
   if (visible_pos >= p->visible_tracks->len) return -1;
   return g_array_index(p->visible_tracks, gint, visible_pos);
 }
 
-static gint visible_find_pos(PypifyApp *p, gint track_index) {
+static gint visible_find_pos(CPifyApp *p, gint track_index) {
   if (!p || !p->visible_tracks) return -1;
   for (guint i = 0; i < p->visible_tracks->len; i++) {
     if (g_array_index(p->visible_tracks, gint, i) == track_index) return (gint)i;
@@ -144,13 +144,13 @@ static gint visible_find_pos(PypifyApp *p, gint track_index) {
   return -1;
 }
 
-static void clear_listbox(PypifyApp *p) {
+static void clear_listbox(CPifyApp *p) {
   if (!p || !p->listbox) return;
   // In GTK 4.12+, use gtk_list_box_remove_all
   gtk_list_box_remove_all(GTK_LIST_BOX(p->listbox));
 }
 
-static void update_list_playing_icons(PypifyApp *p) {
+static void update_list_playing_icons(CPifyApp *p) {
   if (!p || !p->listbox) return;
   // Iterate using gtk_list_box_get_row_at_index for GTK 4 compatibility
   for (gint i = 0; ; i++) {
@@ -169,7 +169,7 @@ static void update_list_playing_icons(PypifyApp *p) {
   }
 }
 
-static void set_now_playing(PypifyApp *p, const gchar *title) {
+static void set_now_playing(CPifyApp *p, const gchar *title) {
   if (!p || !p->now_playing_label) return;
   if (!title || title[0] == '\0') {
     gtk_label_set_markup(GTK_LABEL(p->now_playing_label), 
@@ -183,7 +183,7 @@ static void set_now_playing(PypifyApp *p, const gchar *title) {
   g_free(escaped);
 }
 
-static void populate_listbox(PypifyApp *p) {
+static void populate_listbox(CPifyApp *p) {
   if (!p) return;
   clear_listbox(p);
   if (!p->tracks || !p->visible_tracks || !p->listbox) return;
@@ -191,7 +191,7 @@ static void populate_listbox(PypifyApp *p) {
   for (guint i = 0; i < p->visible_tracks->len; i++) {
     gint track_index = visible_get_track_index(p, i);
     if (track_index < 0 || track_index >= (gint)p->tracks->len) continue;
-    PypifyTrack *t = g_ptr_array_index(p->tracks, (guint)track_index);
+    CPifyTrack *t = g_ptr_array_index(p->tracks, (guint)track_index);
 
     GtkWidget *row = gtk_list_box_row_new();
     g_object_set_data(G_OBJECT(row), "track-index", GINT_TO_POINTER(track_index));
@@ -220,7 +220,7 @@ static void populate_listbox(PypifyApp *p) {
   update_list_playing_icons(p);
 }
 
-static void visible_reset_all(PypifyApp *p) {
+static void visible_reset_all(CPifyApp *p) {
   if (!p) return;
   if (p->visible_tracks) {
     g_array_unref(p->visible_tracks);
@@ -234,7 +234,7 @@ static void visible_reset_all(PypifyApp *p) {
   }
 }
 
-static void visible_apply_search(PypifyApp *p, const gchar *query) {
+static void visible_apply_search(CPifyApp *p, const gchar *query) {
   visible_reset_all(p);
   if (!p || !p->tracks || !p->visible_tracks) return;
   if (!query) return;
@@ -246,7 +246,7 @@ static void visible_apply_search(PypifyApp *p, const gchar *query) {
 
   GArray *filtered = g_array_new(FALSE, FALSE, sizeof(gint));
   for (guint i = 0; i < p->tracks->len; i++) {
-    PypifyTrack *t = g_ptr_array_index(p->tracks, i);
+    CPifyTrack *t = g_ptr_array_index(p->tracks, i);
     const gchar *title = (t && t->title) ? t->title : "";
     gchar *lower = g_utf8_strdown(title, -1);
     gboolean match = (lower && g_strstr_len(lower, -1, q) != NULL);
@@ -262,20 +262,20 @@ static void visible_apply_search(PypifyApp *p, const gchar *query) {
   p->visible_tracks = filtered;
 }
 
-static gboolean ensure_player(PypifyApp *p) {
+static gboolean ensure_player(CPifyApp *p) {
   if (!p) return FALSE;
   if (p->player) return TRUE;
 
-  p->player = pypify_player_new();
+  p->player = cpify_player_new();
   if (!p->player) {
     show_toast(p, "Playback unavailable (GStreamer failed to initialize)");
     return FALSE;
   }
-  pypify_player_set_eos_callback(p->player, on_player_eos, p);
+  cpify_player_set_eos_callback(p->player, on_player_eos, p);
 
   // Add the video widget to the stack
   if (!p->video_widget && p->video_stack) {
-    GtkWidget *vw = pypify_player_get_video_widget(p->player);
+    GtkWidget *vw = cpify_player_get_video_widget(p->player);
     g_print("[DEBUG] ensure_player: got video widget %p\n", (void*)vw);
     if (vw) {
       p->video_widget = vw;
@@ -292,27 +292,27 @@ static gboolean ensure_player(PypifyApp *p) {
 }
 
 // Apply volume setting in real-time (no reload needed)
-static void apply_volume_setting(PypifyApp *p) {
+static void apply_volume_setting(CPifyApp *p) {
   if (!p || !p->player || !p->volume_scale) return;
   gdouble vol = gtk_range_get_value(GTK_RANGE(p->volume_scale)) / 100.0;
-  pypify_player_set_volume(p->player, vol);
+  cpify_player_set_volume(p->player, vol);
 }
 
 // Apply speed/rate setting in real-time (no reload needed)
-static void apply_speed_setting(PypifyApp *p) {
+static void apply_speed_setting(CPifyApp *p) {
   if (!p || !p->player || !p->speed_scale) return;
   gdouble rate = gtk_range_get_value(GTK_RANGE(p->speed_scale)) / 100.0;
-  pypify_player_set_rate(p->player, rate);
+  cpify_player_set_rate(p->player, rate);
 }
 
 // Update video stack visibility based on video switch
-static void update_video_visibility(PypifyApp *p) {
+static void update_video_visibility(CPifyApp *p) {
   if (!p || !p->video_stack) return;
   gboolean video_on = p->video_switch ? 
     adw_switch_row_get_active(ADW_SWITCH_ROW(p->video_switch)) : TRUE;
   
   GtkWidget *vw = p->video_widget ? p->video_widget : 
-    (p->player ? pypify_player_get_video_widget(p->player) : NULL);
+    (p->player ? cpify_player_get_video_widget(p->player) : NULL);
   
   g_print("[DEBUG] update_video_visibility: video_on=%d, video_widget=%p\n", video_on, (void*)vw);
   
@@ -325,7 +325,7 @@ static void update_video_visibility(PypifyApp *p) {
 }
 
 // Apply audio/video toggle - these require pipeline reload
-static void apply_av_toggle_settings(PypifyApp *p) {
+static void apply_av_toggle_settings(CPifyApp *p) {
   if (!p || !p->player) return;
   
   // Don't reload during track loading - it will be set up properly by play_track_index
@@ -339,26 +339,26 @@ static void apply_av_toggle_settings(PypifyApp *p) {
   gboolean video_on = p->video_switch ?
     adw_switch_row_get_active(ADW_SWITCH_ROW(p->video_switch)) : TRUE;
 
-  pypify_player_set_audio_enabled(p->player, audio_on);
-  pypify_player_set_video_enabled(p->player, video_on);
+  cpify_player_set_audio_enabled(p->player, audio_on);
+  cpify_player_set_video_enabled(p->player, video_on);
   update_video_visibility(p);
 
   // Only reload if we have a track playing (to apply audio/video flags)
   if (p->tracks && p->current_track_index >= 0 && 
       p->current_track_index < (gint)p->tracks->len) {
-    PypifyTrack *t = g_ptr_array_index(p->tracks, (guint)p->current_track_index);
+    CPifyTrack *t = g_ptr_array_index(p->tracks, (guint)p->current_track_index);
     if (t && t->path) {
       gint64 pos_ns = 0;
-      gboolean have_pos = pypify_player_query_position(p->player, &pos_ns);
+      gboolean have_pos = cpify_player_query_position(p->player, &pos_ns);
       gdouble pos_s = have_pos ? ((gdouble)pos_ns / (gdouble)GST_SECOND) : 0.0;
       gboolean should_play = p->is_playing;
 
       g_print("[DEBUG] apply_av_toggle_settings: reloading track\n");
       GError *err = NULL;
-      if (pypify_player_set_path(p->player, t->path, &err)) {
-        if (have_pos) pypify_player_seek_to(p->player, pos_s);
-        if (should_play) pypify_player_play(p->player);
-        else pypify_player_pause(p->player);
+      if (cpify_player_set_path(p->player, t->path, &err)) {
+        if (have_pos) cpify_player_seek_to(p->player, pos_s);
+        if (should_play) cpify_player_play(p->player);
+        else cpify_player_pause(p->player);
       } else if (err) {
         g_error_free(err);
       }
@@ -367,7 +367,7 @@ static void apply_av_toggle_settings(PypifyApp *p) {
 }
 
 // Initialize player settings without reload (called when starting playback)
-static void init_player_settings(PypifyApp *p) {
+static void init_player_settings(CPifyApp *p) {
   if (!p || !p->player) return;
   
   gdouble vol = p->volume_scale ? 
@@ -379,19 +379,19 @@ static void init_player_settings(PypifyApp *p) {
   gboolean video_on = p->video_switch ?
     adw_switch_row_get_active(ADW_SWITCH_ROW(p->video_switch)) : TRUE;
 
-  pypify_player_set_volume(p->player, vol);
-  pypify_player_set_rate(p->player, rate);
-  pypify_player_set_audio_enabled(p->player, audio_on);
-  pypify_player_set_video_enabled(p->player, video_on);
+  cpify_player_set_volume(p->player, vol);
+  cpify_player_set_rate(p->player, rate);
+  cpify_player_set_audio_enabled(p->player, audio_on);
+  cpify_player_set_video_enabled(p->player, video_on);
   update_video_visibility(p);
 }
 
-static void play_track_index(PypifyApp *p, gint track_index) {
+static void play_track_index(CPifyApp *p, gint track_index) {
   if (!p || !p->tracks) return;
   if (track_index < 0 || track_index >= (gint)p->tracks->len) return;
   if (!ensure_player(p)) return;
 
-  PypifyTrack *t = g_ptr_array_index(p->tracks, (guint)track_index);
+  CPifyTrack *t = g_ptr_array_index(p->tracks, (guint)track_index);
   if (!t || !t->path) return;
 
   // Set guard to prevent settings callbacks from reloading during init
@@ -399,7 +399,7 @@ static void play_track_index(PypifyApp *p, gint track_index) {
   init_player_settings(p);
 
   GError *err = NULL;
-  if (!pypify_player_set_path(p->player, t->path, &err)) {
+  if (!cpify_player_set_path(p->player, t->path, &err)) {
     p->is_loading_track = FALSE;
     gchar *msg = g_strdup_printf("Unable to play: %s", err ? err->message : "unknown error");
     show_toast(p, msg);
@@ -414,7 +414,7 @@ static void play_track_index(PypifyApp *p, gint track_index) {
   
   update_play_button(p);
   set_now_playing(p, t->title ? t->title : t->path);
-  pypify_player_play(p->player);
+  cpify_player_play(p->player);
 
   update_list_playing_icons(p);
 
@@ -425,7 +425,7 @@ static void play_track_index(PypifyApp *p, gint track_index) {
   }
 }
 
-static gint choose_next_visible_pos(PypifyApp *p) {
+static gint choose_next_visible_pos(CPifyApp *p) {
   guint n = visible_len(p);
   if (n == 0) return -1;
 
@@ -446,12 +446,12 @@ static gint choose_next_visible_pos(PypifyApp *p) {
   return (cur_pos + 1) % (gint)n;
 }
 
-static void play_next(PypifyApp *p) {
+static void play_next(CPifyApp *p) {
   gint next_pos = choose_next_visible_pos(p);
   if (next_pos < 0) {
     p->is_playing = FALSE;
     update_play_button(p);
-    if (p->player) pypify_player_stop(p->player);
+    if (p->player) cpify_player_stop(p->player);
     set_status(p, "Reached end of list.");
     update_list_playing_icons(p);
     return;
@@ -460,7 +460,7 @@ static void play_next(PypifyApp *p) {
   play_track_index(p, track_index);
 }
 
-static void play_prev(PypifyApp *p) {
+static void play_prev(CPifyApp *p) {
   guint n = visible_len(p);
   if (n == 0) return;
   gint cur_pos = visible_find_pos(p, p->current_track_index);
@@ -470,7 +470,7 @@ static void play_prev(PypifyApp *p) {
 }
 
 static void on_player_eos(gpointer user_data) {
-  PypifyApp *p = (PypifyApp *)user_data;
+  CPifyApp *p = (CPifyApp *)user_data;
   if (!p) return;
   if (get_repeat(p) && p->current_track_index >= 0) {
     play_track_index(p, p->current_track_index);
@@ -479,7 +479,7 @@ static void on_player_eos(gpointer user_data) {
   play_next(p);
 }
 
-static void load_folder(PypifyApp *p, const gchar *folder) {
+static void load_folder(CPifyApp *p, const gchar *folder) {
   g_print("[DEBUG] load_folder: called with folder='%s'\n", folder ? folder : "(null)");
   if (!p || !folder) return;
 
@@ -495,7 +495,7 @@ static void load_folder(PypifyApp *p, const gchar *folder) {
 
   g_print("[DEBUG] load_folder: scanning...\n");
   GError *err = NULL;
-  p->tracks = pypify_scan_folder(folder, &err);
+  p->tracks = cpify_scan_folder(folder, &err);
   if (!p->tracks) {
     gchar *msg = g_strdup_printf("Scan failed: %s", err ? err->message : "unknown error");
     show_toast(p, msg);
@@ -535,7 +535,7 @@ static void load_folder(PypifyApp *p, const gchar *folder) {
 
 static void on_folder_selected(GObject *source, GAsyncResult *result, gpointer user_data) {
   GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-  PypifyApp *p = (PypifyApp *)user_data;
+  CPifyApp *p = (CPifyApp *)user_data;
   gboolean from_splash = g_from_splash;
   g_from_splash = FALSE;
   
@@ -563,7 +563,7 @@ static void on_folder_selected(GObject *source, GAsyncResult *result, gpointer u
   // If dialog was dismissed and we came from splash, stay on splash
 }
 
-static void open_folder_dialog(PypifyApp *p) {
+static void open_folder_dialog(CPifyApp *p) {
   GtkFileDialog *dialog = gtk_file_dialog_new();
   gtk_file_dialog_set_title(dialog, "Select a media folder");
   gtk_file_dialog_set_modal(dialog, TRUE);
@@ -581,20 +581,20 @@ static void open_folder_dialog(PypifyApp *p) {
 // Button click handlers with sound effects
 static void on_open_folder_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  pypify_play_click_sound();
-  open_folder_dialog((PypifyApp *)user_data);
+  cpify_play_click_sound();
+  open_folder_dialog((CPifyApp *)user_data);
 }
 
 static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
   (void)box;
-  pypify_play_click_sound();
-  PypifyApp *p = (PypifyApp *)user_data;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
   gint track_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "track-index"));
   play_track_index(p, track_index);
 }
 
 static void on_search_changed(GtkEditable *editable, gpointer user_data) {
-  PypifyApp *p = (PypifyApp *)user_data;
+  CPifyApp *p = (CPifyApp *)user_data;
   const gchar *q = gtk_editable_get_text(editable);
   visible_apply_search(p, q);
   populate_listbox(p);
@@ -603,8 +603,8 @@ static void on_search_changed(GtkEditable *editable, gpointer user_data) {
 
 static void on_play_pause_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  pypify_play_click_sound();
-  PypifyApp *p = (PypifyApp *)user_data;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
   if (!p->tracks || p->tracks->len == 0) return;
   if (!ensure_player(p)) return;
 
@@ -617,10 +617,10 @@ static void on_play_pause_clicked(GtkButton *btn, gpointer user_data) {
 
   if (p->is_playing) {
     p->is_playing = FALSE;
-    pypify_player_pause(p->player);
+    cpify_player_pause(p->player);
   } else {
     p->is_playing = TRUE;
-    pypify_player_play(p->player);
+    cpify_player_play(p->player);
   }
   update_play_button(p);
   update_list_playing_icons(p);
@@ -628,49 +628,49 @@ static void on_play_pause_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_next_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  pypify_play_click_sound();
-  play_next((PypifyApp *)user_data);
+  cpify_play_click_sound();
+  play_next((CPifyApp *)user_data);
 }
 
 static void on_prev_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  pypify_play_click_sound();
-  play_prev((PypifyApp *)user_data);
+  cpify_play_click_sound();
+  play_prev((CPifyApp *)user_data);
 }
 
 static void on_skip_back_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  pypify_play_click_sound();
-  PypifyApp *p = (PypifyApp *)user_data;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
   if (!p || !p->player || p->current_track_index < 0) return;
-  pypify_player_seek_relative(p->player, -10.0);
+  cpify_player_seek_relative(p->player, -10.0);
 }
 
 static void on_skip_forward_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  pypify_play_click_sound();
-  PypifyApp *p = (PypifyApp *)user_data;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
   if (!p || !p->player || p->current_track_index < 0) return;
-  pypify_player_seek_relative(p->player, 10.0);
+  cpify_player_seek_relative(p->player, 10.0);
 }
 
 static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  pypify_play_click_sound();
-  PypifyApp *p = (PypifyApp *)user_data;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
   gtk_popover_popup(GTK_POPOVER(p->settings_popover));
 }
 
 static void on_shuffle_toggled(GtkToggleButton *btn, gpointer user_data) {
   (void)btn;
   (void)user_data;
-  pypify_play_click_sound();
+  cpify_play_click_sound();
 }
 
 static void on_repeat_toggled(GtkToggleButton *btn, gpointer user_data) {
   (void)btn;
   (void)user_data;
-  pypify_play_click_sound();
+  cpify_play_click_sound();
 }
 
 // Progress bar drag handling using GtkGestureClick
@@ -678,56 +678,56 @@ static void on_progress_drag_begin(GtkGestureDrag *gesture, gdouble x, gdouble y
   (void)gesture;
   (void)x;
   (void)y;
-  ((PypifyApp *)user_data)->progress_dragging = TRUE;
+  ((CPifyApp *)user_data)->progress_dragging = TRUE;
 }
 
 static void on_progress_drag_end(GtkGestureDrag *gesture, gdouble x, gdouble y, gpointer user_data) {
   (void)gesture;
   (void)x;
   (void)y;
-  PypifyApp *p = (PypifyApp *)user_data;
+  CPifyApp *p = (CPifyApp *)user_data;
   p->progress_dragging = FALSE;
   if (!p->player || p->current_track_index < 0) return;
   gdouble seconds = gtk_range_get_value(GTK_RANGE(p->progress_scale));
-  pypify_player_seek_to(p->player, seconds);
+  cpify_player_seek_to(p->player, seconds);
 }
 
 static void on_volume_changed(GtkRange *range, gpointer user_data) {
   (void)range;
   // Volume applies in real-time, no reload needed
-  apply_volume_setting((PypifyApp *)user_data);
+  apply_volume_setting((CPifyApp *)user_data);
 }
 
 static void on_speed_changed(GtkRange *range, gpointer user_data) {
   (void)range;
   // Speed applies in real-time, no reload needed
-  apply_speed_setting((PypifyApp *)user_data);
+  apply_speed_setting((CPifyApp *)user_data);
 }
 
 static void on_audio_switch_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)obj;
   (void)pspec;
-  pypify_play_click_sound();
+  cpify_play_click_sound();
   // Audio toggle requires pipeline reload to apply flags
-  apply_av_toggle_settings((PypifyApp *)user_data);
+  apply_av_toggle_settings((CPifyApp *)user_data);
 }
 
 static void on_video_switch_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)obj;
   (void)pspec;
-  pypify_play_click_sound();
+  cpify_play_click_sound();
   // Video toggle requires pipeline reload to apply flags
-  apply_av_toggle_settings((PypifyApp *)user_data);
+  apply_av_toggle_settings((CPifyApp *)user_data);
 }
 
 static gboolean on_tick(gpointer user_data) {
-  PypifyApp *p = (PypifyApp *)user_data;
+  CPifyApp *p = (CPifyApp *)user_data;
   if (!p || !p->player || p->current_track_index < 0) return G_SOURCE_CONTINUE;
 
   gint64 pos_ns = 0;
   gint64 dur_ns = 0;
-  gboolean have_pos = pypify_player_query_position(p->player, &pos_ns);
-  gboolean have_dur = pypify_player_query_duration(p->player, &dur_ns);
+  gboolean have_pos = cpify_player_query_position(p->player, &pos_ns);
+  gboolean have_dur = cpify_player_query_duration(p->player, &dur_ns);
   if (!have_pos || !have_dur || dur_ns <= 0) return G_SOURCE_CONTINUE;
 
   gdouble pos_s = (gdouble)pos_ns / (gdouble)GST_SECOND;
@@ -754,7 +754,7 @@ static gchar *format_scale_percent(GtkScale *scale, gdouble value, gpointer user
   return g_strdup_printf("%.0f%%", value);
 }
 
-static GtkWidget *build_settings_popover(PypifyApp *p) {
+static GtkWidget *build_settings_popover(CPifyApp *p) {
   GtkWidget *popover = gtk_popover_new();
   gtk_widget_set_parent(popover, p->settings_button);
   
@@ -819,7 +819,7 @@ static GtkWidget *build_settings_popover(PypifyApp *p) {
   return popover;
 }
 
-static GtkWidget *build_sidebar(PypifyApp *p) {
+static GtkWidget *build_sidebar(CPifyApp *p) {
   GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
   gtk_widget_set_size_request(left, 320, -1);
   gtk_widget_set_margin_start(left, 12);
@@ -848,7 +848,7 @@ static GtkWidget *build_sidebar(PypifyApp *p) {
   return left;
 }
 
-static GtkWidget *build_center(PypifyApp *p) {
+static GtkWidget *build_center(CPifyApp *p) {
   GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
   gtk_widget_set_hexpand(right, TRUE);
   gtk_widget_set_vexpand(right, TRUE);
@@ -901,7 +901,7 @@ static GtkWidget *build_center(PypifyApp *p) {
   return right;
 }
 
-static GtkWidget *build_controls(PypifyApp *p) {
+static GtkWidget *build_controls(CPifyApp *p) {
   GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_set_halign(controls, GTK_ALIGN_CENTER);
   gtk_widget_set_margin_start(controls, 12);
@@ -948,7 +948,7 @@ static GtkWidget *build_controls(PypifyApp *p) {
   return controls;
 }
 
-static GtkWidget *build_main(PypifyApp *p) {
+static GtkWidget *build_main(CPifyApp *p) {
   GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
   GtkWidget *sidebar = build_sidebar(p);
   GtkWidget *center = build_center(p);
@@ -961,14 +961,14 @@ static GtkWidget *build_main(PypifyApp *p) {
 
 static void on_window_destroy(GtkWidget *w, gpointer user_data) {
   (void)w;
-  PypifyApp *p = (PypifyApp *)user_data;
+  CPifyApp *p = (CPifyApp *)user_data;
   if (!p) return;
   if (p->tick_id) {
     g_source_remove(p->tick_id);
     p->tick_id = 0;
   }
   if (p->player) {
-    pypify_player_free(p->player);
+    cpify_player_free(p->player);
     p->player = NULL;
   }
   if (p->tracks) {
@@ -982,20 +982,20 @@ static void on_window_destroy(GtkWidget *w, gpointer user_data) {
   g_free(p->current_folder);
   p->current_folder = NULL;
   
-  pypify_sound_effects_cleanup();
+  cpify_sound_effects_cleanup();
   g_free(p);
 }
 
 static void on_splash_mapped(GtkWidget *widget, gpointer user_data) {
   (void)user_data;
-  pypify_splash_start_animation(widget);
+  cpify_splash_start_animation(widget);
 }
 
-PypifyApp *pypify_app_new(AdwApplication *app) {
+CPifyApp *cpify_app_new(AdwApplication *app) {
   gst_init(NULL, NULL);
-  pypify_sound_effects_init();
+  cpify_sound_effects_init();
 
-  PypifyApp *p = g_new0(PypifyApp, 1);
+  CPifyApp *p = g_new0(CPifyApp, 1);
   p->app = app;
   p->current_track_index = -1;
   p->is_playing = FALSE;
@@ -1004,7 +1004,7 @@ PypifyApp *pypify_app_new(AdwApplication *app) {
 
   // Create the main window with AdwApplicationWindow
   p->window = ADW_APPLICATION_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
-  gtk_window_set_title(GTK_WINDOW(p->window), "Pypify");
+  gtk_window_set_title(GTK_WINDOW(p->window), "CPify");
   gtk_window_set_default_size(GTK_WINDOW(p->window), 1200, 760);
   g_signal_connect(p->window, "destroy", G_CALLBACK(on_window_destroy), p);
 
@@ -1014,7 +1014,7 @@ PypifyApp *pypify_app_new(AdwApplication *app) {
   // Create header bar with libadwaita styling (hidden initially for splash)
   p->header_bar = ADW_HEADER_BAR(adw_header_bar_new());
   adw_header_bar_set_title_widget(p->header_bar, 
-    adw_window_title_new("Pypify", "Media Player"));
+    adw_window_title_new("CPify", "Media Player"));
   gtk_widget_set_visible(GTK_WIDGET(p->header_bar), FALSE);
 
   // Open folder button
@@ -1040,7 +1040,7 @@ PypifyApp *pypify_app_new(AdwApplication *app) {
   gtk_widget_set_vexpand(p->content_stack, TRUE);
 
   // Create splash screen
-  p->splash_screen = pypify_splash_new(on_splash_add_folder, p);
+  p->splash_screen = cpify_splash_new(on_splash_add_folder, p);
   g_signal_connect(p->splash_screen, "map", G_CALLBACK(on_splash_mapped), NULL);
   gtk_stack_add_named(GTK_STACK(p->content_stack), p->splash_screen, "splash");
 
@@ -1083,6 +1083,6 @@ PypifyApp *pypify_app_new(AdwApplication *app) {
   return p;
 }
 
-void pypify_app_show(PypifyApp *p) {
+void cpify_app_show(CPifyApp *p) {
   gtk_window_present(GTK_WINDOW(p->window));
 }

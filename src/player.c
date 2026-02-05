@@ -4,13 +4,13 @@
 #include <gst/video/videooverlay.h>
 
 // playbin "flags" is a bitmask
-#define PYPIFY_PLAY_FLAG_VIDEO (1u << 0)
-#define PYPIFY_PLAY_FLAG_AUDIO (1u << 1)
-#define PYPIFY_PLAY_FLAG_DOWNLOAD (1u << 7)
+#define CPIFY_PLAY_FLAG_VIDEO (1u << 0)
+#define CPIFY_PLAY_FLAG_AUDIO (1u << 1)
+#define CPIFY_PLAY_FLAG_DOWNLOAD (1u << 7)
 
 static gboolean on_bus_message(GstBus *bus, GstMessage *msg, gpointer user_data) {
   (void)bus;
-  PypifyPlayer *p = (PypifyPlayer *)user_data;
+  CPifyPlayer *p = (CPifyPlayer *)user_data;
   switch (GST_MESSAGE_TYPE(msg)) {
     case GST_MESSAGE_EOS:
       if (p->eos_cb) p->eos_cb(p->eos_cb_data);
@@ -73,55 +73,34 @@ static GtkWidget *try_create_gtk4_sink_widget(GstElement *playbin, GdkPaintable 
   return picture;
 }
 
-PypifyPlayer *pypify_player_new(void) {
-  g_print("[DEBUG] pypify_player_new: called\n");
-  PypifyPlayer *p = g_new0(PypifyPlayer, 1);
+CPifyPlayer *cpify_player_new(void) {
+  g_print("[DEBUG] cpify_player_new: called\n");
+  CPifyPlayer *p = g_new0(CPifyPlayer, 1);
 
   p->audio_enabled = TRUE;
   p->video_enabled = TRUE;
   p->volume = 0.8;
   p->rate = 1.0;
   
-  // TEMPORARY: Force external video to test if GStreamer video works at all
-  // Set PYPIFY_EMBEDDED_VIDEO=1 to use embedded video instead
-  const gchar *use_embedded = g_getenv("PYPIFY_EMBEDDED_VIDEO");
-  if (!use_embedded || g_strcmp0(use_embedded, "1") != 0) {
-    g_print("[DEBUG] Using playbin with autovideosink (video in separate window)\n");
-    p->use_gtk_media = FALSE;
-    
-    p->playbin = gst_element_factory_make("playbin", "pypify-playbin");
-    if (p->playbin) {
-      GstElement *videosink = gst_element_factory_make("autovideosink", NULL);
-      if (videosink) {
-        g_object_set(p->playbin, "video-sink", videosink, NULL);
-      }
-      p->bus = gst_element_get_bus(p->playbin);
-      p->bus_watch_id = gst_bus_add_watch(p->bus, on_bus_message, p);
-    }
-    
-    p->video_widget = gtk_label_new("Video playing in external window\n(testing GStreamer video)");
-    gtk_label_set_justify(GTK_LABEL(p->video_widget), GTK_JUSTIFY_CENTER);
-    gtk_widget_set_hexpand(p->video_widget, TRUE);
-    gtk_widget_set_vexpand(p->video_widget, TRUE);
-  } else {
-    p->use_gtk_media = TRUE;
-    
-    // Create a GtkPicture - we'll set its paintable from the media stream
-    p->video_widget = gtk_picture_new();
-    gtk_widget_set_hexpand(p->video_widget, TRUE);
-    gtk_widget_set_vexpand(p->video_widget, TRUE);
-    gtk_picture_set_content_fit(GTK_PICTURE(p->video_widget), GTK_CONTENT_FIT_CONTAIN);
-    
-    g_print("[DEBUG] pypify_player_new: created GtkPicture widget for video\n");
-  }
+  // Use GtkMediaFile by default for embedded video in GTK4
+  // GtkMediaFile uses the best available backend (usually GStreamer)
+  // and displays video natively within our GTK4 interface
+  p->use_gtk_media = TRUE;
   
-  g_print("[DEBUG] pypify_player_new: done\n");
+  // Create a GtkPicture - we'll set its paintable from the media stream
+  p->video_widget = gtk_picture_new();
+  gtk_widget_set_hexpand(p->video_widget, TRUE);
+  gtk_widget_set_vexpand(p->video_widget, TRUE);
+  gtk_picture_set_content_fit(GTK_PICTURE(p->video_widget), GTK_CONTENT_FIT_CONTAIN);
+  
+  g_print("[DEBUG] cpify_player_new: created GtkPicture widget for embedded video\n");
+  g_print("[DEBUG] cpify_player_new: done\n");
   return p;
 }
 
-void pypify_player_free(PypifyPlayer *p) {
+void cpify_player_free(CPifyPlayer *p) {
   if (!p) return;
-  pypify_player_stop(p);
+  cpify_player_stop(p);
   
   if (!p->use_gtk_media) {
     if (p->bus_watch_id) {
@@ -156,11 +135,11 @@ void pypify_player_free(PypifyPlayer *p) {
   g_free(p);
 }
 
-GtkWidget *pypify_player_get_video_widget(PypifyPlayer *p) {
+GtkWidget *cpify_player_get_video_widget(CPifyPlayer *p) {
   return p ? p->video_widget : NULL;
 }
 
-void pypify_player_set_eos_callback(PypifyPlayer *p, PypifyPlayerEosCallback cb, gpointer user_data) {
+void cpify_player_set_eos_callback(CPifyPlayer *p, CPifyPlayerEosCallback cb, gpointer user_data) {
   if (!p) return;
   p->eos_cb = cb;
   p->eos_cb_data = user_data;
@@ -169,7 +148,7 @@ void pypify_player_set_eos_callback(PypifyPlayer *p, PypifyPlayerEosCallback cb,
 static void on_media_stream_ended(GtkMediaStream *stream, GParamSpec *pspec, gpointer user_data) {
   (void)stream;
   (void)pspec;
-  PypifyPlayer *p = (PypifyPlayer *)user_data;
+  CPifyPlayer *p = (CPifyPlayer *)user_data;
   
   // Check if stream has ended
   if (p->media_stream && gtk_media_stream_get_ended(p->media_stream)) {
@@ -180,8 +159,8 @@ static void on_media_stream_ended(GtkMediaStream *stream, GParamSpec *pspec, gpo
   }
 }
 
-gboolean pypify_player_set_path(PypifyPlayer *p, const gchar *abs_path, GError **error) {
-  g_print("[DEBUG] pypify_player_set_path: path='%s'\n", abs_path ? abs_path : "(null)");
+gboolean cpify_player_set_path(CPifyPlayer *p, const gchar *abs_path, GError **error) {
+  g_print("[DEBUG] cpify_player_set_path: path='%s'\n", abs_path ? abs_path : "(null)");
   if (!p || !abs_path || abs_path[0] == '\0') {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid path");
     return FALSE;
@@ -216,7 +195,7 @@ gboolean pypify_player_set_path(PypifyPlayer *p, const gchar *abs_path, GError *
     // GtkMediaStream is a GdkPaintable, so we can use it directly
     gtk_picture_set_paintable(GTK_PICTURE(p->video_widget), GDK_PAINTABLE(p->media_stream));
     
-    g_print("[DEBUG] pypify_player_set_path: set media stream paintable on GtkPicture\n");
+    g_print("[DEBUG] cpify_player_set_path: set media stream paintable on GtkPicture\n");
     return TRUE;
   }
   
@@ -228,21 +207,21 @@ gboolean pypify_player_set_path(PypifyPlayer *p, const gchar *abs_path, GError *
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Unable to build URI from path");
     return FALSE;
   }
-  g_print("[DEBUG] pypify_player_set_path: URI='%s'\n", uri);
+  g_print("[DEBUG] cpify_player_set_path: URI='%s'\n", uri);
 
   // Apply audio/video flags
   guint flags = 0;
   g_object_get(p->playbin, "flags", &flags, NULL);
-  flags |= PYPIFY_PLAY_FLAG_DOWNLOAD;
+  flags |= CPIFY_PLAY_FLAG_DOWNLOAD;
   if (p->audio_enabled) {
-    flags |= PYPIFY_PLAY_FLAG_AUDIO;
+    flags |= CPIFY_PLAY_FLAG_AUDIO;
   } else {
-    flags &= ~PYPIFY_PLAY_FLAG_AUDIO;
+    flags &= ~CPIFY_PLAY_FLAG_AUDIO;
   }
   if (p->video_enabled) {
-    flags |= PYPIFY_PLAY_FLAG_VIDEO;
+    flags |= CPIFY_PLAY_FLAG_VIDEO;
   } else {
-    flags &= ~PYPIFY_PLAY_FLAG_VIDEO;
+    flags &= ~CPIFY_PLAY_FLAG_VIDEO;
   }
   g_object_set(p->playbin, "flags", flags, "volume", p->volume, NULL);
   g_object_set(p->playbin, "uri", uri, NULL);
@@ -251,7 +230,7 @@ gboolean pypify_player_set_path(PypifyPlayer *p, const gchar *abs_path, GError *
   return TRUE;
 }
 
-void pypify_player_play(PypifyPlayer *p) {
+void cpify_player_play(CPifyPlayer *p) {
   if (!p) return;
   if (p->use_gtk_media && p->media_stream) {
     gtk_media_stream_play(p->media_stream);
@@ -262,7 +241,7 @@ void pypify_player_play(PypifyPlayer *p) {
   }
 }
 
-void pypify_player_pause(PypifyPlayer *p) {
+void cpify_player_pause(CPifyPlayer *p) {
   if (!p) return;
   if (p->use_gtk_media && p->media_stream) {
     gtk_media_stream_pause(p->media_stream);
@@ -273,7 +252,7 @@ void pypify_player_pause(PypifyPlayer *p) {
   }
 }
 
-void pypify_player_stop(PypifyPlayer *p) {
+void cpify_player_stop(CPifyPlayer *p) {
   if (!p) return;
   if (p->use_gtk_media && p->media_stream) {
     gtk_media_stream_pause(p->media_stream);
@@ -285,7 +264,7 @@ void pypify_player_stop(PypifyPlayer *p) {
   }
 }
 
-void pypify_player_set_volume(PypifyPlayer *p, gdouble volume_0_to_1) {
+void cpify_player_set_volume(CPifyPlayer *p, gdouble volume_0_to_1) {
   if (!p) return;
   if (volume_0_to_1 < 0.0) volume_0_to_1 = 0.0;
   if (volume_0_to_1 > 1.0) volume_0_to_1 = 1.0;
@@ -300,7 +279,7 @@ void pypify_player_set_volume(PypifyPlayer *p, gdouble volume_0_to_1) {
   }
 }
 
-void pypify_player_set_audio_enabled(PypifyPlayer *p, gboolean enabled) {
+void cpify_player_set_audio_enabled(CPifyPlayer *p, gboolean enabled) {
   if (!p) return;
   p->audio_enabled = enabled ? TRUE : FALSE;
   
@@ -309,13 +288,13 @@ void pypify_player_set_audio_enabled(PypifyPlayer *p, gboolean enabled) {
   }
 }
 
-void pypify_player_set_video_enabled(PypifyPlayer *p, gboolean enabled) {
+void cpify_player_set_video_enabled(CPifyPlayer *p, gboolean enabled) {
   if (!p) return;
   p->video_enabled = enabled ? TRUE : FALSE;
   // GtkVideo doesn't support disabling video separately
 }
 
-static gboolean do_seek_with_rate(PypifyPlayer *p, gint64 start_ns) {
+static gboolean do_seek_with_rate(CPifyPlayer *p, gint64 start_ns) {
   if (!p) return FALSE;
   GstSeekFlags flags = (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE);
   gboolean ok = gst_element_seek(
@@ -331,7 +310,7 @@ static gboolean do_seek_with_rate(PypifyPlayer *p, gint64 start_ns) {
   return ok ? TRUE : FALSE;
 }
 
-void pypify_player_set_rate(PypifyPlayer *p, gdouble rate) {
+void cpify_player_set_rate(CPifyPlayer *p, gdouble rate) {
   if (!p) return;
   if (rate < 0.25) rate = 0.25;
   if (rate > 4.0) rate = 4.0;
@@ -344,13 +323,13 @@ void pypify_player_set_rate(PypifyPlayer *p, gdouble rate) {
   
   if (p->playbin) {
     gint64 pos = 0;
-    if (pypify_player_query_position(p, &pos)) {
+    if (cpify_player_query_position(p, &pos)) {
       do_seek_with_rate(p, pos);
     }
   }
 }
 
-gboolean pypify_player_seek_to(PypifyPlayer *p, gdouble position_seconds) {
+gboolean cpify_player_seek_to(CPifyPlayer *p, gdouble position_seconds) {
   if (!p) return FALSE;
   if (position_seconds < 0.0) position_seconds = 0.0;
   
@@ -367,10 +346,10 @@ gboolean pypify_player_seek_to(PypifyPlayer *p, gdouble position_seconds) {
   return FALSE;
 }
 
-gboolean pypify_player_seek_relative(PypifyPlayer *p, gdouble delta_seconds) {
+gboolean cpify_player_seek_relative(CPifyPlayer *p, gdouble delta_seconds) {
   if (!p) return FALSE;
   gint64 pos = 0;
-  if (!pypify_player_query_position(p, &pos)) return FALSE;
+  if (!cpify_player_query_position(p, &pos)) return FALSE;
   
   if (p->use_gtk_media && p->media_stream) {
     gint64 delta_us = (gint64)(delta_seconds * 1000000.0);
@@ -389,7 +368,7 @@ gboolean pypify_player_seek_relative(PypifyPlayer *p, gdouble delta_seconds) {
   return FALSE;
 }
 
-gboolean pypify_player_query_position(PypifyPlayer *p, gint64 *out_position_ns) {
+gboolean cpify_player_query_position(CPifyPlayer *p, gint64 *out_position_ns) {
   if (!p || !out_position_ns) return FALSE;
   
   if (p->use_gtk_media && p->media_stream) {
@@ -408,7 +387,7 @@ gboolean pypify_player_query_position(PypifyPlayer *p, gint64 *out_position_ns) 
   return FALSE;
 }
 
-gboolean pypify_player_query_duration(PypifyPlayer *p, gint64 *out_duration_ns) {
+gboolean cpify_player_query_duration(CPifyPlayer *p, gint64 *out_duration_ns) {
   if (!p || !out_duration_ns) return FALSE;
   
   if (p->use_gtk_media && p->media_stream) {

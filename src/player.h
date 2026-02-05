@@ -3,7 +3,7 @@
 #include <gtk/gtk.h>
 #include <gst/gst.h>
 
-typedef void (*PypifyPlayerEosCallback)(gpointer user_data);
+typedef void (*CPifyPlayerEosCallback)(gpointer user_data);
 
 typedef struct {
   // GStreamer playbin (used for audio control and seeking)
@@ -17,7 +17,7 @@ typedef struct {
   GdkPaintable *paintable;  // From gtk4paintablesink
   GtkMediaStream *media_stream;  // Alternative: GTK4 native media
 
-  PypifyPlayerEosCallback eos_cb;
+  CPifyPlayerEosCallback eos_cb;
   gpointer eos_cb_data;
 
   gboolean audio_enabled;
@@ -25,28 +25,28 @@ typedef struct {
   gboolean use_gtk_media;  // TRUE if using GtkMediaFile instead of playbin
   gdouble volume;  // 0..1
   gdouble rate;    // playback rate (1.0 = normal)
-} PypifyPlayer;
+} CPifyPlayer;
 
-PypifyPlayer *pypify_player_new(void);
-void pypify_player_free(PypifyPlayer *player);
+CPifyPlayer *cpify_player_new(void);
+void cpify_player_free(CPifyPlayer *player);
 
 // Returns a widget that can be packed into the UI to display video
-GtkWidget *pypify_player_get_video_widget(PypifyPlayer *player);
+GtkWidget *cpify_player_get_video_widget(CPifyPlayer *player);
 
-void pypify_player_set_eos_callback(PypifyPlayer *player, PypifyPlayerEosCallback cb, gpointer user_data);
+void cpify_player_set_eos_callback(CPifyPlayer *player, CPifyPlayerEosCallback cb, gpointer user_data);
 
-gboolean pypify_player_set_path(PypifyPlayer *player, const gchar *abs_path, GError **error);
-void pypify_player_play(PypifyPlayer *player);
-void pypify_player_pause(PypifyPlayer *player);
-void pypify_player_stop(PypifyPlayer *player);
+gboolean cpify_player_set_path(CPifyPlayer *player, const gchar *abs_path, GError **error);
+void cpify_player_play(CPifyPlayer *player);
+void cpify_player_pause(CPifyPlayer *player);
+void cpify_player_stop(CPifyPlayer *player);
 
-void pypify_player_set_volume(PypifyPlayer *player, gdouble volume_0_to_1);
-void pypify_player_set_audio_enabled(PypifyPlayer *player, gboolean enabled);
-void pypify_player_set_video_enabled(PypifyPlayer *player, gboolean enabled);
-void pypify_player_set_rate(PypifyPlayer *player, gdouble rate);
+void cpify_player_set_volume(CPifyPlayer *player, gdouble volume_0_to_1);
+void cpify_player_set_audio_enabled(CPifyPlayer *player, gboolean enabled);
+void cpify_player_set_video_enabled(CPifyPlayer *player, gboolean enabled);
+void cpify_player_set_rate(CPifyPlayer *player, gdouble rate);
 
-gboolean pypify_player_seek_relative(PypifyPlayer *player, gdouble delta_seconds);
-gboolean pypify_player_seek_to(PypifyPlayer *player, gdouble position_seconds);
+gboolean cpify_player_seek_relative(CPifyPlayer *player, gdouble delta_seconds);
+gboolean cpify_player_seek_to(CPifyPlayer *player, gdouble position_seconds);
 
-gboolean pypify_player_query_position(PypifyPlayer *player, gint64 *out_position_ns);
-gboolean pypify_player_query_duration(PypifyPlayer *player, gint64 *out_duration_ns);
+gboolean cpify_player_query_position(CPifyPlayer *player, gint64 *out_position_ns);
+gboolean cpify_player_query_duration(CPifyPlayer *player, gint64 *out_duration_ns);
