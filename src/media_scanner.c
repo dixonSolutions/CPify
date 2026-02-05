@@ -228,8 +228,8 @@ GPtrArray *cpify_scan_folder(const gchar *folder_path, GError **error) {
 // ==== Async Thumbnail Generation ====
 
 // Thread pool for parallel thumbnail generation
+G_LOCK_DEFINE_STATIC(thumbnail_pool);
 static GThreadPool *thumbnail_thread_pool = NULL;
-static GMutex pool_mutex;
 static gboolean pool_initialized = FALSE;
 
 // Task data for async thumbnail generation
@@ -279,7 +279,7 @@ static void thumbnail_worker(gpointer data, gpointer user_data) {
 
 // Initialize thread pool (call once)
 static void ensure_thread_pool_initialized(void) {
-  g_mutex_lock(&pool_mutex);
+  G_LOCK(thumbnail_pool);
   
   if (!pool_initialized) {
     GError *error = NULL;
@@ -307,7 +307,7 @@ static void ensure_thread_pool_initialized(void) {
     pool_initialized = TRUE;
   }
   
-  g_mutex_unlock(&pool_mutex);
+  G_UNLOCK(thumbnail_pool);
 }
 
 void cpify_track_generate_thumbnail_async(CPifyTrack *track,
@@ -370,7 +370,7 @@ void cpify_generate_thumbnails_batch(GPtrArray *tracks,
 }
 
 void cpify_thumbnail_cleanup(void) {
-  g_mutex_lock(&pool_mutex);
+  G_LOCK(thumbnail_pool);
   
   if (thumbnail_thread_pool) {
     g_thread_pool_free(thumbnail_thread_pool, FALSE, TRUE);
@@ -378,6 +378,6 @@ void cpify_thumbnail_cleanup(void) {
   }
   pool_initialized = FALSE;
   
-  g_mutex_unlock(&pool_mutex);
+  G_UNLOCK(thumbnail_pool);
 }
 

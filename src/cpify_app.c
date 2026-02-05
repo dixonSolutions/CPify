@@ -746,14 +746,32 @@ static void on_player_eos(gpointer user_data) {
   play_next(p);
 }
 
-// Thumbnail generation callback
+// Thumbnail generation callback with debounced gallery refresh
+static guint gallery_refresh_timer = 0;
+
+static gboolean refresh_gallery_idle(gpointer user_data) {
+  CPifyApp *p = (CPifyApp *)user_data;
+  gallery_refresh_timer = 0;
+  
+  if (p && p->current_layout == LAYOUT_GALLERY) {
+    populate_gallery(p);
+  }
+  
+  return G_SOURCE_REMOVE;
+}
+
 static void on_thumbnail_generated(CPifyTrack *track, gpointer user_data) {
   CPifyApp *p = (CPifyApp *)user_data;
   if (!p) return;
   
-  // Refresh gallery if visible
+  (void)track; // unused
+  
+  // Debounce gallery refresh - only refresh after 200ms of no updates
   if (p->current_layout == LAYOUT_GALLERY) {
-    populate_gallery(p);
+    if (gallery_refresh_timer != 0) {
+      g_source_remove(gallery_refresh_timer);
+    }
+    gallery_refresh_timer = g_timeout_add(200, refresh_gallery_idle, p);
   }
 }
 
@@ -1404,6 +1422,10 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
   if (p->tick_id) {
     g_source_remove(p->tick_id);
     p->tick_id = 0;
+  }
+  if (gallery_refresh_timer != 0) {
+    g_source_remove(gallery_refresh_timer);
+    gallery_refresh_timer = 0;
   }
   if (p->player) {
     cpify_player_free(p->player);
