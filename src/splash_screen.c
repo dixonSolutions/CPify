@@ -12,7 +12,7 @@ typedef struct {
   GtkWidget *add_folder_button;
   GtkWidget *main_box;
 
-  PypifySplashCallback on_add_folder;
+  CPifySplashCallback on_add_folder;
   gpointer user_data;
 
   // Animation state
@@ -55,9 +55,9 @@ static void update_logo_for_theme(SplashData *data) {
 
     gchar *logo_path;
     if (dark) {
-      logo_path = g_build_filename(PYPIFY_ASSETS_DIR, "Pypify Dark Mode Logo copy.svg", NULL);
+      logo_path = g_build_filename(CPIFY_ASSETS_DIR, "CPify Dark Mode Logo.svg", NULL);
     } else {
-      logo_path = g_build_filename(PYPIFY_ASSETS_DIR, "Pypify Light Mode Logo.svg", NULL);
+      logo_path = g_build_filename(CPIFY_ASSETS_DIR, "CPify Light Mode Logo.svg", NULL);
     }
 
     GdkTexture *texture = gdk_texture_new_from_filename(logo_path, NULL);
@@ -149,7 +149,7 @@ static gboolean on_animation_tick(GtkWidget *widget, GdkFrameClock *clock, gpoin
 static void on_add_folder_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SplashData *data = (SplashData *)user_data;
-  pypify_play_click_sound();
+  cpify_play_click_sound();
   if (data->on_add_folder) {
     data->on_add_folder(data->user_data);
   }
@@ -220,7 +220,7 @@ static void update_splash_background_class(SplashData *data) {
   }
 }
 
-GtkWidget *pypify_splash_new(PypifySplashCallback on_add_folder, gpointer user_data) {
+GtkWidget *cpify_splash_new(CPifySplashCallback on_add_folder, gpointer user_data) {
   setup_splash_css();
 
   SplashData *data = g_new0(SplashData, 1);
@@ -247,7 +247,7 @@ GtkWidget *pypify_splash_new(PypifySplashCallback on_add_folder, gpointer user_d
   gtk_widget_set_margin_bottom(data->main_box, 48);
 
   // Title label "PyPify" at top
-  data->title_label = gtk_label_new("PyPify");
+  data->title_label = gtk_label_new("CPify");
   gtk_widget_add_css_class(data->title_label, "splash-title");
   gtk_widget_set_opacity(data->title_label, 0.0);
   gtk_widget_set_margin_bottom(data->title_label, 8);
@@ -292,7 +292,7 @@ GtkWidget *pypify_splash_new(PypifySplashCallback on_add_folder, gpointer user_d
   return data->overlay;
 }
 
-void pypify_splash_start_animation(GtkWidget *splash) {
+void cpify_splash_start_animation(GtkWidget *splash) {
   SplashData *data = g_object_get_data(G_OBJECT(splash), "splash-data");
   if (!data || data->animation_tick_id) return;
 

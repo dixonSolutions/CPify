@@ -37,24 +37,22 @@ sudo pacman -S \
 ## Notes
 
 - This build uses **GTK 4** with **libadwaita** for modern GNOME design guidelines
-- For video display, `gtk4paintablesink` from `gstreamer1-plugins-good-gtk4` is preferred
-- If GTK4 sink isn't available, it falls back to legacy video sinks
+- For video display, CPify uses **GtkMediaFile** which provides native GTK4 video embedding
+- GtkMediaFile uses the best available GStreamer backend internally
 
 ## Verify install
 
 ```bash
 pkg-config --modversion gtk4 libadwaita-1 gstreamer-1.0 gstreamer-video-1.0
-gst-inspect-1.0 gtk4paintablesink  # Should show the GTK4 video sink element
 ```
 
 ## Build and Run
 
 ```bash
-cd cprojectmigrate
+cd CPify
 meson setup build
-cd build
-ninja
-./src/pypify
+meson compile -C build
+./build/src/cpify
 ```
 
 Or use the convenience script:

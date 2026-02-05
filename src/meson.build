@@ -1,8 +1,9 @@
 srcs = files(
   'main.c',
-  'pypify_app.c',
+  'cpify_app.c',
   'media_scanner.c',
   'player.c',
+  'settings.c',
   'sound_effects.c',
   'splash_screen.c',
 )
@@ -13,9 +14,9 @@ incs = include_directories('.')
 config_inc = include_directories('..')
 
 executable(
-  'pypify',
+  'cpify',
   srcs,
   include_directories: [incs, config_inc],
-  dependencies: [gtk, adw, gst, gst_video, gst_audio, gio, glib, libm],
+  dependencies: [gtk, adw, gst, gst_video, gst_audio, gio, glib, gdk_pixbuf, libm],
   install: false,
 )

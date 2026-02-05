@@ -7,8 +7,14 @@
 
 #include "media_scanner.h"
 #include "player.h"
+#include "settings.h"
 #include "sound_effects.h"
 #include "splash_screen.h"
+
+typedef enum {
+  LAYOUT_SIDEBAR,
+  LAYOUT_GALLERY
+} CPifyLayout;
 
 struct _CPifyApp {
   AdwApplication *app;
@@ -21,15 +27,36 @@ struct _CPifyApp {
 
   // Header bar
   AdwHeaderBar *header_bar;
+  GtkWidget *sidebar_toggle;
   GtkWidget *open_folder_button;
+  GtkWidget *layout_dropdown;
+  GtkWidget *theme_dropdown;
   GtkWidget *settings_button;
   GtkWidget *settings_popover;
 
-  // Sidebar
+  // Layout state
+  CPifyLayout current_layout;
+  GtkWidget *layout_stack;  // Stack for switching between sidebar and gallery layouts
+  
+  // Sidebar layout widgets
+  GtkWidget *sidebar_layout;
+  GtkWidget *sidebar;
   GtkWidget *search_entry;
   GtkWidget *listbox;
 
-  // Center
+  // Gallery layout widgets
+  GtkWidget *gallery_layout;
+  GtkWidget *gallery_search_entry;
+  GtkWidget *gallery_grid;
+  GtkWidget *gallery_scroll;
+
+  // Video overlay (for gallery fullscreen with minimize)
+  GtkWidget *video_overlay;
+  GtkWidget *video_container;
+  gboolean video_minimized;
+  GtkWidget *minimize_button;
+
+  // Center (shared)
   GtkWidget *now_playing_label;
   GtkWidget *video_stack;
   GtkWidget *video_widget;
@@ -74,6 +101,9 @@ static void play_track_index(CPifyApp *p, gint track_index);
 static void on_search_changed(GtkEditable *editable, gpointer user_data);
 static void open_folder_dialog(CPifyApp *p);
 static void switch_to_player_view(CPifyApp *p);
+static void populate_gallery(CPifyApp *p);
+static void switch_layout(CPifyApp *p, CPifyLayout layout);
+static void update_video_for_layout(CPifyApp *p);
 
 static void switch_to_player_view(CPifyApp *p) {
   if (!p || !p->content_stack) return;
@@ -262,6 +292,238 @@ static void visible_apply_search(CPifyApp *p, const gchar *query) {
   p->visible_tracks = filtered;
 }
 
+// ============ Gallery Layout Functions ============
+
+static void clear_gallery(CPifyApp *p) {
+  if (!p || !p->gallery_grid) return;
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(p->gallery_grid)) != NULL) {
+    gtk_flow_box_remove(GTK_FLOW_BOX(p->gallery_grid), child);
+  }
+}
+
+static void on_gallery_item_activated(GtkFlowBox *box, GtkFlowBoxChild *child, gpointer user_data) {
+  (void)box;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
+  gint track_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "track-index"));
+  play_track_index(p, track_index);
+}
+
+static void populate_gallery(CPifyApp *p) {
+  if (!p) return;
+  clear_gallery(p);
+  if (!p->tracks || !p->visible_tracks || !p->gallery_grid) return;
+
+  for (guint i = 0; i < p->visible_tracks->len; i++) {
+    gint track_index = visible_get_track_index(p, i);
+    if (track_index < 0 || track_index >= (gint)p->tracks->len) continue;
+    CPifyTrack *t = g_ptr_array_index(p->tracks, (guint)track_index);
+
+    // Create a card-like item for the gallery
+    GtkWidget *item = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_size_request(item, 180, 180);
+    gtk_widget_add_css_class(item, "card");
+    gtk_widget_set_margin_top(item, 8);
+    gtk_widget_set_margin_bottom(item, 8);
+    gtk_widget_set_margin_start(item, 8);
+    gtk_widget_set_margin_end(item, 8);
+
+    // Thumbnail - use actual thumbnail if available, otherwise icon
+    GtkWidget *thumb;
+    if (t && t->thumbnail) {
+      // Use the actual video thumbnail
+      GdkTexture *texture = gdk_texture_new_for_pixbuf(t->thumbnail);
+      thumb = gtk_picture_new_for_paintable(GDK_PAINTABLE(texture));
+      gtk_picture_set_content_fit(GTK_PICTURE(thumb), GTK_CONTENT_FIT_COVER);
+      gtk_widget_set_size_request(thumb, 160, 100);
+      g_object_unref(texture);
+    } else {
+      // Use icon based on file type
+      const char *icon_name = (t && t->is_video) ? 
+        "video-x-generic-symbolic" : "audio-x-generic-symbolic";
+      thumb = gtk_image_new_from_icon_name(icon_name);
+      gtk_image_set_pixel_size(GTK_IMAGE(thumb), 64);
+      gtk_widget_add_css_class(thumb, "dim-label");
+    }
+    gtk_widget_set_hexpand(thumb, TRUE);
+    gtk_widget_set_vexpand(thumb, TRUE);
+    gtk_widget_set_valign(thumb, GTK_ALIGN_CENTER);
+    gtk_widget_set_halign(thumb, GTK_ALIGN_CENTER);
+
+    // Title label
+    GtkWidget *label = gtk_label_new(t && t->title ? t->title : "(unknown)");
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 20);
+    gtk_label_set_lines(GTK_LABEL(label), 2);
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_CENTER);
+    gtk_widget_set_halign(label, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_start(label, 8);
+    gtk_widget_set_margin_end(label, 8);
+    gtk_widget_set_margin_bottom(label, 8);
+
+    gtk_box_append(GTK_BOX(item), thumb);
+    gtk_box_append(GTK_BOX(item), label);
+
+    // Wrap in FlowBoxChild and store track index
+    GtkWidget *flow_child = gtk_flow_box_child_new();
+    g_object_set_data(G_OBJECT(flow_child), "track-index", GINT_TO_POINTER(track_index));
+    gtk_flow_box_child_set_child(GTK_FLOW_BOX_CHILD(flow_child), item);
+    gtk_flow_box_append(GTK_FLOW_BOX(p->gallery_grid), flow_child);
+  }
+}
+
+static void on_gallery_search_changed(GtkEditable *editable, gpointer user_data) {
+  CPifyApp *p = (CPifyApp *)user_data;
+  const gchar *q = gtk_editable_get_text(editable);
+  visible_apply_search(p, q);
+  populate_gallery(p);
+}
+
+static void on_video_minimize_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
+  if (!p || !p->video_container) return;
+  
+  p->video_minimized = !p->video_minimized;
+  
+  if (p->video_minimized) {
+    // Minimize to corner - small size, positioned in corner
+    gtk_widget_set_size_request(p->video_container, 320, 180);
+    gtk_widget_set_halign(p->video_container, GTK_ALIGN_END);
+    gtk_widget_set_valign(p->video_container, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(p->video_container, 12);
+    gtk_widget_set_margin_end(p->video_container, 12);
+    gtk_button_set_icon_name(GTK_BUTTON(p->minimize_button), "view-fullscreen-symbolic");
+    gtk_widget_set_tooltip_text(p->minimize_button, "Maximize Video");
+    // Show the gallery behind
+    gtk_widget_set_visible(p->gallery_scroll, TRUE);
+  } else {
+    // Maximize - full size
+    gtk_widget_set_size_request(p->video_container, -1, -1);
+    gtk_widget_set_halign(p->video_container, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(p->video_container, GTK_ALIGN_FILL);
+    gtk_widget_set_margin_top(p->video_container, 0);
+    gtk_widget_set_margin_end(p->video_container, 0);
+    gtk_button_set_icon_name(GTK_BUTTON(p->minimize_button), "window-minimize-symbolic");
+    gtk_widget_set_tooltip_text(p->minimize_button, "Minimize Video");
+    // Hide gallery when video is fullscreen
+    gtk_widget_set_visible(p->gallery_scroll, FALSE);
+  }
+}
+
+static void switch_layout(CPifyApp *p, CPifyLayout layout) {
+  if (!p || !p->layout_stack) return;
+  if (p->current_layout == layout) return;
+  
+  p->current_layout = layout;
+  
+  if (layout == LAYOUT_SIDEBAR) {
+    gtk_stack_set_visible_child_name(GTK_STACK(p->layout_stack), "sidebar");
+    gtk_widget_set_visible(p->sidebar_toggle, TRUE);
+  } else {
+    gtk_stack_set_visible_child_name(GTK_STACK(p->layout_stack), "gallery");
+    gtk_widget_set_visible(p->sidebar_toggle, FALSE);
+    // Sync search and populate gallery
+    if (p->search_entry && p->gallery_search_entry) {
+      const gchar *q = gtk_editable_get_text(GTK_EDITABLE(p->search_entry));
+      gtk_editable_set_text(GTK_EDITABLE(p->gallery_search_entry), q);
+    }
+    populate_gallery(p);
+  }
+  
+  // Update video widget position for the new layout
+  update_video_for_layout(p);
+}
+
+static void on_layout_dropdown_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
+  guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+  switch_layout(p, selected == 0 ? LAYOUT_SIDEBAR : LAYOUT_GALLERY);
+  
+  // Save layout preference
+  CPifySettings *settings = cpify_settings_get();
+  settings->layout = (gint)selected;
+  cpify_settings_save();
+}
+
+static void on_theme_dropdown_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
+  guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+  
+  CPifyTheme theme;
+  switch (selected) {
+    case 1: theme = CPIFY_THEME_LIGHT; break;
+    case 2: theme = CPIFY_THEME_DARK; break;
+    default: theme = CPIFY_THEME_SYSTEM; break;
+  }
+  
+  cpify_settings_apply_theme(p->app, theme);
+  
+  // Save theme preference
+  CPifySettings *settings = cpify_settings_get();
+  settings->theme = theme;
+  cpify_settings_save();
+}
+
+static void update_video_for_layout(CPifyApp *p) {
+  if (!p || !p->video_widget) return;
+  
+  GtkWidget *current_parent = gtk_widget_get_parent(p->video_widget);
+  
+  if (p->current_layout == LAYOUT_GALLERY) {
+    // Move video to gallery overlay container
+    if (p->video_container && current_parent != p->video_container) {
+      // Remove from current parent
+      if (current_parent) {
+        if (GTK_IS_STACK(current_parent)) {
+          // Don't unparent from stack - just hide it there
+        } else {
+          g_object_ref(p->video_widget);
+          gtk_box_remove(GTK_BOX(current_parent), p->video_widget);
+        }
+      }
+      
+      // Remove placeholder if exists
+      GtkWidget *child = gtk_widget_get_last_child(p->video_container);
+      while (child) {
+        GtkWidget *prev = gtk_widget_get_prev_sibling(child);
+        if (GTK_IS_LABEL(child)) {
+          gtk_box_remove(GTK_BOX(p->video_container), child);
+        }
+        child = prev;
+      }
+      
+      // Add video widget to container
+      gtk_box_append(GTK_BOX(p->video_container), p->video_widget);
+      if (current_parent && !GTK_IS_STACK(current_parent)) {
+        g_object_unref(p->video_widget);
+      }
+      
+      gtk_widget_set_visible(p->video_container, p->is_playing);
+    }
+  } else {
+    // Move video to sidebar's video stack
+    if (p->video_stack) {
+      // The video_stack already has the video, just make it visible
+      gtk_stack_set_visible_child(GTK_STACK(p->video_stack), p->video_widget);
+      
+      // Hide gallery video container
+      if (p->video_container) {
+        gtk_widget_set_visible(p->video_container, FALSE);
+      }
+    }
+  }
+}
+
+// ============ End Gallery Layout Functions ============
+
 static gboolean ensure_player(CPifyApp *p) {
   if (!p) return FALSE;
   if (p->player) return TRUE;
@@ -291,11 +553,19 @@ static gboolean ensure_player(CPifyApp *p) {
   return TRUE;
 }
 
-// Apply volume setting in real-time (no reload needed)
+// Apply volume setting in real-time (respects audio mute state)
 static void apply_volume_setting(CPifyApp *p) {
   if (!p || !p->player || !p->volume_scale) return;
-  gdouble vol = gtk_range_get_value(GTK_RANGE(p->volume_scale)) / 100.0;
-  cpify_player_set_volume(p->player, vol);
+  
+  // Only apply volume if audio is enabled (not muted)
+  gboolean audio_on = p->audio_switch ?
+    adw_switch_row_get_active(ADW_SWITCH_ROW(p->audio_switch)) : TRUE;
+  
+  if (audio_on) {
+    gdouble vol = gtk_range_get_value(GTK_RANGE(p->volume_scale)) / 100.0;
+    cpify_player_set_volume(p->player, vol);
+  }
+  // If audio is off, keep it muted (volume stays at 0)
 }
 
 // Apply speed/rate setting in real-time (no reload needed)
@@ -324,66 +594,45 @@ static void update_video_visibility(CPifyApp *p) {
   }
 }
 
-// Apply audio/video toggle - these require pipeline reload
-static void apply_av_toggle_settings(CPifyApp *p) {
+// Apply audio toggle in real-time (mute/unmute without restart)
+static void apply_audio_toggle(CPifyApp *p) {
   if (!p || !p->player) return;
-  
-  // Don't reload during track loading - it will be set up properly by play_track_index
-  if (p->is_loading_track) {
-    g_print("[DEBUG] apply_av_toggle_settings: skipped during track load\n");
-    return;
-  }
   
   gboolean audio_on = p->audio_switch ?
     adw_switch_row_get_active(ADW_SWITCH_ROW(p->audio_switch)) : TRUE;
-  gboolean video_on = p->video_switch ?
-    adw_switch_row_get_active(ADW_SWITCH_ROW(p->video_switch)) : TRUE;
-
-  cpify_player_set_audio_enabled(p->player, audio_on);
-  cpify_player_set_video_enabled(p->player, video_on);
-  update_video_visibility(p);
-
-  // Only reload if we have a track playing (to apply audio/video flags)
-  if (p->tracks && p->current_track_index >= 0 && 
-      p->current_track_index < (gint)p->tracks->len) {
-    CPifyTrack *t = g_ptr_array_index(p->tracks, (guint)p->current_track_index);
-    if (t && t->path) {
-      gint64 pos_ns = 0;
-      gboolean have_pos = cpify_player_query_position(p->player, &pos_ns);
-      gdouble pos_s = have_pos ? ((gdouble)pos_ns / (gdouble)GST_SECOND) : 0.0;
-      gboolean should_play = p->is_playing;
-
-      g_print("[DEBUG] apply_av_toggle_settings: reloading track\n");
-      GError *err = NULL;
-      if (cpify_player_set_path(p->player, t->path, &err)) {
-        if (have_pos) cpify_player_seek_to(p->player, pos_s);
-        if (should_play) cpify_player_play(p->player);
-        else cpify_player_pause(p->player);
-      } else if (err) {
-        g_error_free(err);
-      }
-    }
+  
+  if (audio_on) {
+    // Restore volume from slider
+    gdouble vol = p->volume_scale ? 
+      gtk_range_get_value(GTK_RANGE(p->volume_scale)) / 100.0 : 0.8;
+    cpify_player_set_volume(p->player, vol);
+  } else {
+    // Mute by setting volume to 0
+    cpify_player_set_volume(p->player, 0.0);
   }
+}
+
+// Apply video toggle in real-time (show/hide without restart)
+static void apply_video_toggle(CPifyApp *p) {
+  if (!p) return;
+  // Just update visibility - video keeps playing in background
+  update_video_visibility(p);
 }
 
 // Initialize player settings without reload (called when starting playback)
 static void init_player_settings(CPifyApp *p) {
   if (!p || !p->player) return;
   
-  gdouble vol = p->volume_scale ? 
-    gtk_range_get_value(GTK_RANGE(p->volume_scale)) / 100.0 : 0.8;
   gdouble rate = p->speed_scale ?
     gtk_range_get_value(GTK_RANGE(p->speed_scale)) / 100.0 : 1.0;
-  gboolean audio_on = p->audio_switch ?
-    adw_switch_row_get_active(ADW_SWITCH_ROW(p->audio_switch)) : TRUE;
-  gboolean video_on = p->video_switch ?
-    adw_switch_row_get_active(ADW_SWITCH_ROW(p->video_switch)) : TRUE;
-
-  cpify_player_set_volume(p->player, vol);
+  
   cpify_player_set_rate(p->player, rate);
-  cpify_player_set_audio_enabled(p->player, audio_on);
-  cpify_player_set_video_enabled(p->player, video_on);
-  update_video_visibility(p);
+  
+  // Apply audio toggle (handles mute state and volume)
+  apply_audio_toggle(p);
+  
+  // Apply video toggle (handles visibility)
+  apply_video_toggle(p);
 }
 
 static void play_track_index(CPifyApp *p, gint track_index) {
@@ -393,6 +642,9 @@ static void play_track_index(CPifyApp *p, gint track_index) {
 
   CPifyTrack *t = g_ptr_array_index(p->tracks, (guint)track_index);
   if (!t || !t->path) return;
+
+  // Stop current playback before loading new track
+  cpify_player_stop(p->player);
 
   // Set guard to prevent settings callbacks from reloading during init
   p->is_loading_track = TRUE;
@@ -423,6 +675,9 @@ static void play_track_index(CPifyApp *p, gint track_index) {
     GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(p->listbox), visible_pos);
     if (row) gtk_list_box_select_row(GTK_LIST_BOX(p->listbox), row);
   }
+  
+  // Update video position based on current layout
+  update_video_for_layout(p);
 }
 
 static gint choose_next_visible_pos(CPifyApp *p) {
@@ -479,12 +734,69 @@ static void on_player_eos(gpointer user_data) {
   play_next(p);
 }
 
+// Thumbnail generation state
+typedef struct {
+  CPifyApp *app;
+  guint current_index;
+} ThumbnailGenState;
+
+static gboolean generate_next_thumbnail(gpointer user_data) {
+  ThumbnailGenState *state = (ThumbnailGenState *)user_data;
+  if (!state || !state->app || !state->app->tracks) {
+    g_free(state);
+    return G_SOURCE_REMOVE;
+  }
+  
+  CPifyApp *p = state->app;
+  
+  // Find next video track without thumbnail
+  while (state->current_index < p->tracks->len) {
+    CPifyTrack *t = g_ptr_array_index(p->tracks, state->current_index);
+    state->current_index++;
+    
+    if (t && t->is_video && !t->thumbnail) {
+      // Generate thumbnail for this track
+      cpify_track_generate_thumbnail(t);
+      
+      // Refresh gallery if visible
+      if (p->current_layout == LAYOUT_GALLERY) {
+        populate_gallery(p);
+      }
+      
+      // Continue on next idle
+      return G_SOURCE_CONTINUE;
+    }
+  }
+  
+  // All done
+  g_print("[DEBUG] Thumbnail generation complete\n");
+  g_free(state);
+  return G_SOURCE_REMOVE;
+}
+
+static void start_thumbnail_generation(CPifyApp *p) {
+  if (!p || !p->tracks) return;
+  
+  ThumbnailGenState *state = g_new0(ThumbnailGenState, 1);
+  state->app = p;
+  state->current_index = 0;
+  
+  // Use low priority idle to not block UI
+  g_idle_add_full(G_PRIORITY_LOW, generate_next_thumbnail, state, NULL);
+}
+
 static void load_folder(CPifyApp *p, const gchar *folder) {
   g_print("[DEBUG] load_folder: called with folder='%s'\n", folder ? folder : "(null)");
   if (!p || !folder) return;
 
   g_free(p->current_folder);
   p->current_folder = g_strdup(folder);
+  
+  // Save last folder to settings
+  CPifySettings *settings = cpify_settings_get();
+  g_free(settings->last_folder);
+  settings->last_folder = g_strdup(folder);
+  cpify_settings_save();
 
   if (p->tracks) {
     g_ptr_array_unref(p->tracks);
@@ -505,19 +817,25 @@ static void load_folder(CPifyApp *p, const gchar *folder) {
   }
   g_print("[DEBUG] load_folder: found %u tracks\n", p->tracks->len);
 
-  // Block search signal while we update the entry
-  g_print("[DEBUG] load_folder: clearing search entry...\n");
+  // Block search signal while we update the entries
+  g_print("[DEBUG] load_folder: clearing search entries...\n");
   if (p->search_entry) {
     g_signal_handlers_block_by_func(p->search_entry, on_search_changed, p);
     gtk_editable_set_text(GTK_EDITABLE(p->search_entry), "");
     g_signal_handlers_unblock_by_func(p->search_entry, on_search_changed, p);
   }
+  if (p->gallery_search_entry) {
+    g_signal_handlers_block_by_func(p->gallery_search_entry, on_gallery_search_changed, p);
+    gtk_editable_set_text(GTK_EDITABLE(p->gallery_search_entry), "");
+    g_signal_handlers_unblock_by_func(p->gallery_search_entry, on_gallery_search_changed, p);
+  }
   
   g_print("[DEBUG] load_folder: visible_reset_all...\n");
   visible_reset_all(p);
   
-  g_print("[DEBUG] load_folder: populate_listbox...\n");
+  g_print("[DEBUG] load_folder: populate views...\n");
   populate_listbox(p);
+  populate_gallery(p);
 
   p->current_track_index = -1;
   p->is_playing = FALSE;
@@ -530,6 +848,10 @@ static void load_folder(CPifyApp *p, const gchar *folder) {
   gchar *status = g_strdup_printf("Loaded %u media file(s)", p->tracks->len);
   set_status(p, status);
   g_free(status);
+  
+  // Start generating thumbnails in background
+  start_thumbnail_generation(p);
+  
   g_print("[DEBUG] load_folder: done\n");
 }
 
@@ -579,6 +901,20 @@ static void open_folder_dialog(CPifyApp *p) {
 }
 
 // Button click handlers with sound effects
+static void on_sidebar_toggle_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  cpify_play_click_sound();
+  CPifyApp *p = (CPifyApp *)user_data;
+  if (!p || !p->sidebar) return;
+  
+  gboolean visible = gtk_widget_get_visible(p->sidebar);
+  gtk_widget_set_visible(p->sidebar, !visible);
+  
+  // Update button icon
+  gtk_button_set_icon_name(GTK_BUTTON(p->sidebar_toggle), 
+    visible ? "sidebar-show-symbolic" : "sidebar-hide-symbolic");
+}
+
 static void on_open_folder_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   cpify_play_click_sound();
@@ -693,31 +1029,47 @@ static void on_progress_drag_end(GtkGestureDrag *gesture, gdouble x, gdouble y, 
 }
 
 static void on_volume_changed(GtkRange *range, gpointer user_data) {
-  (void)range;
-  // Volume applies in real-time, no reload needed
-  apply_volume_setting((CPifyApp *)user_data);
+  CPifyApp *p = (CPifyApp *)user_data;
+  apply_volume_setting(p);
+  
+  // Save to settings
+  CPifySettings *settings = cpify_settings_get();
+  settings->volume = gtk_range_get_value(range);
+  cpify_settings_save();
 }
 
 static void on_speed_changed(GtkRange *range, gpointer user_data) {
-  (void)range;
-  // Speed applies in real-time, no reload needed
-  apply_speed_setting((CPifyApp *)user_data);
+  CPifyApp *p = (CPifyApp *)user_data;
+  apply_speed_setting(p);
+  
+  // Save to settings
+  CPifySettings *settings = cpify_settings_get();
+  settings->speed = gtk_range_get_value(range);
+  cpify_settings_save();
 }
 
 static void on_audio_switch_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
-  (void)obj;
   (void)pspec;
   cpify_play_click_sound();
-  // Audio toggle requires pipeline reload to apply flags
-  apply_av_toggle_settings((CPifyApp *)user_data);
+  CPifyApp *p = (CPifyApp *)user_data;
+  apply_audio_toggle(p);
+  
+  // Save to settings
+  CPifySettings *settings = cpify_settings_get();
+  settings->audio_enabled = adw_switch_row_get_active(ADW_SWITCH_ROW(obj));
+  cpify_settings_save();
 }
 
 static void on_video_switch_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
-  (void)obj;
   (void)pspec;
   cpify_play_click_sound();
-  // Video toggle requires pipeline reload to apply flags
-  apply_av_toggle_settings((CPifyApp *)user_data);
+  CPifyApp *p = (CPifyApp *)user_data;
+  apply_video_toggle(p);
+  
+  // Save to settings
+  CPifySettings *settings = cpify_settings_get();
+  settings->video_enabled = adw_switch_row_get_active(ADW_SWITCH_ROW(obj));
+  cpify_settings_save();
 }
 
 static gboolean on_tick(gpointer user_data) {
@@ -820,12 +1172,12 @@ static GtkWidget *build_settings_popover(CPifyApp *p) {
 }
 
 static GtkWidget *build_sidebar(CPifyApp *p) {
-  GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  gtk_widget_set_size_request(left, 320, -1);
-  gtk_widget_set_margin_start(left, 12);
-  gtk_widget_set_margin_end(left, 0);
-  gtk_widget_set_margin_top(left, 12);
-  gtk_widget_set_margin_bottom(left, 12);
+  p->sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_widget_set_size_request(p->sidebar, 320, -1);
+  gtk_widget_set_margin_start(p->sidebar, 12);
+  gtk_widget_set_margin_end(p->sidebar, 0);
+  gtk_widget_set_margin_top(p->sidebar, 12);
+  gtk_widget_set_margin_bottom(p->sidebar, 12);
 
   p->search_entry = gtk_search_entry_new();
   gtk_widget_set_hexpand(p->search_entry, TRUE);
@@ -843,9 +1195,9 @@ static GtkWidget *build_sidebar(CPifyApp *p) {
   g_signal_connect(p->listbox, "row-activated", G_CALLBACK(on_row_activated), p);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(list_scroller), p->listbox);
 
-  gtk_box_append(GTK_BOX(left), p->search_entry);
-  gtk_box_append(GTK_BOX(left), list_scroller);
-  return left;
+  gtk_box_append(GTK_BOX(p->sidebar), p->search_entry);
+  gtk_box_append(GTK_BOX(p->sidebar), list_scroller);
+  return p->sidebar;
 }
 
 static GtkWidget *build_center(CPifyApp *p) {
@@ -948,21 +1300,126 @@ static GtkWidget *build_controls(CPifyApp *p) {
   return controls;
 }
 
-static GtkWidget *build_main(CPifyApp *p) {
-  GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-  GtkWidget *sidebar = build_sidebar(p);
-  GtkWidget *center = build_center(p);
-  gtk_paned_set_start_child(GTK_PANED(paned), sidebar);
-  gtk_paned_set_end_child(GTK_PANED(paned), center);
-  gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
-  gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
-  return paned;
+static GtkWidget *build_gallery_layout(CPifyApp *p) {
+  // Main container with overlay for minimized video
+  p->video_overlay = gtk_overlay_new();
+  gtk_widget_set_hexpand(p->video_overlay, TRUE);
+  gtk_widget_set_vexpand(p->video_overlay, TRUE);
+  
+  // Gallery content (base layer)
+  GtkWidget *gallery_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(gallery_box, 12);
+  gtk_widget_set_margin_end(gallery_box, 12);
+  gtk_widget_set_margin_top(gallery_box, 12);
+  gtk_widget_set_margin_bottom(gallery_box, 12);
+  
+  // Search entry for gallery
+  p->gallery_search_entry = gtk_search_entry_new();
+  gtk_widget_set_hexpand(p->gallery_search_entry, TRUE);
+  g_object_set(p->gallery_search_entry, "placeholder-text", "Search songs…", NULL);
+  g_signal_connect(p->gallery_search_entry, "changed", G_CALLBACK(on_gallery_search_changed), p);
+  
+  // Scrolled window for the grid
+  p->gallery_scroll = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(p->gallery_scroll), 
+    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_vexpand(p->gallery_scroll, TRUE);
+  
+  // Flow box for grid of items
+  p->gallery_grid = gtk_flow_box_new();
+  gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(p->gallery_grid), GTK_SELECTION_NONE);
+  gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(p->gallery_grid), TRUE);
+  gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(p->gallery_grid), 10);
+  gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(p->gallery_grid), 2);
+  gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(p->gallery_grid), 8);
+  gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(p->gallery_grid), 8);
+  gtk_flow_box_set_activate_on_single_click(GTK_FLOW_BOX(p->gallery_grid), TRUE);
+  g_signal_connect(p->gallery_grid, "child-activated", G_CALLBACK(on_gallery_item_activated), p);
+  
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(p->gallery_scroll), p->gallery_grid);
+  
+  gtk_box_append(GTK_BOX(gallery_box), p->gallery_search_entry);
+  gtk_box_append(GTK_BOX(gallery_box), p->gallery_scroll);
+  
+  gtk_overlay_set_child(GTK_OVERLAY(p->video_overlay), gallery_box);
+  
+  // Video container (overlay layer) - starts hidden, shown when playing
+  p->video_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_widget_add_css_class(p->video_container, "card");
+  gtk_widget_set_visible(p->video_container, FALSE);  // Hidden until playback starts
+  
+  // Minimize button inside video container
+  GtkWidget *video_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_halign(video_header, GTK_ALIGN_END);
+  gtk_widget_set_margin_top(video_header, 8);
+  gtk_widget_set_margin_end(video_header, 8);
+  
+  p->minimize_button = gtk_button_new_from_icon_name("window-minimize-symbolic");
+  gtk_widget_set_tooltip_text(p->minimize_button, "Minimize Video");
+  gtk_widget_add_css_class(p->minimize_button, "circular");
+  gtk_widget_add_css_class(p->minimize_button, "osd");
+  g_signal_connect(p->minimize_button, "clicked", G_CALLBACK(on_video_minimize_clicked), p);
+  
+  gtk_box_append(GTK_BOX(video_header), p->minimize_button);
+  gtk_box_append(GTK_BOX(p->video_container), video_header);
+  
+  // The actual video will be added here when playing
+  // For now, add a placeholder
+  GtkWidget *video_placeholder = gtk_label_new("Video will appear here");
+  gtk_widget_set_hexpand(video_placeholder, TRUE);
+  gtk_widget_set_vexpand(video_placeholder, TRUE);
+  gtk_widget_add_css_class(video_placeholder, "dim-label");
+  gtk_box_append(GTK_BOX(p->video_container), video_placeholder);
+  
+  gtk_overlay_add_overlay(GTK_OVERLAY(p->video_overlay), p->video_container);
+  
+  p->video_minimized = TRUE;  // Start minimized (video in corner when playing)
+  
+  return p->video_overlay;
 }
 
-static void on_window_destroy(GtkWidget *w, gpointer user_data) {
-  (void)w;
+static GtkWidget *build_main(CPifyApp *p) {
+  // Create layout stack for switching between sidebar and gallery
+  p->layout_stack = gtk_stack_new();
+  gtk_stack_set_transition_type(GTK_STACK(p->layout_stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+  gtk_stack_set_transition_duration(GTK_STACK(p->layout_stack), 200);
+  gtk_widget_set_hexpand(p->layout_stack, TRUE);
+  gtk_widget_set_vexpand(p->layout_stack, TRUE);
+  
+  // Sidebar layout (default)
+  p->sidebar_layout = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+  GtkWidget *sidebar = build_sidebar(p);
+  GtkWidget *center = build_center(p);
+  gtk_paned_set_start_child(GTK_PANED(p->sidebar_layout), sidebar);
+  gtk_paned_set_end_child(GTK_PANED(p->sidebar_layout), center);
+  gtk_paned_set_shrink_start_child(GTK_PANED(p->sidebar_layout), FALSE);
+  gtk_paned_set_shrink_end_child(GTK_PANED(p->sidebar_layout), FALSE);
+  
+  // Gallery layout
+  p->gallery_layout = build_gallery_layout(p);
+  
+  // Add to stack
+  gtk_stack_add_named(GTK_STACK(p->layout_stack), p->sidebar_layout, "sidebar");
+  gtk_stack_add_named(GTK_STACK(p->layout_stack), p->gallery_layout, "gallery");
+  
+  // Default to sidebar layout
+  p->current_layout = LAYOUT_SIDEBAR;
+  gtk_stack_set_visible_child_name(GTK_STACK(p->layout_stack), "sidebar");
+  
+  return p->layout_stack;
+}
+
+static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
+  (void)window;
   CPifyApp *p = (CPifyApp *)user_data;
-  if (!p) return;
+  if (!p) return FALSE;
+  
+  // Clean up popover before button is destroyed
+  if (p->settings_popover) {
+    gtk_widget_unparent(p->settings_popover);
+    p->settings_popover = NULL;
+  }
+  
   if (p->tick_id) {
     g_source_remove(p->tick_id);
     p->tick_id = 0;
@@ -983,7 +1440,10 @@ static void on_window_destroy(GtkWidget *w, gpointer user_data) {
   p->current_folder = NULL;
   
   cpify_sound_effects_cleanup();
+  cpify_settings_cleanup();
   g_free(p);
+  
+  return FALSE;  // Allow window to close
 }
 
 static void on_splash_mapped(GtkWidget *widget, gpointer user_data) {
@@ -994,6 +1454,11 @@ static void on_splash_mapped(GtkWidget *widget, gpointer user_data) {
 CPifyApp *cpify_app_new(AdwApplication *app) {
   gst_init(NULL, NULL);
   cpify_sound_effects_init();
+  cpify_settings_init();
+
+  // Apply saved theme immediately
+  CPifySettings *settings = cpify_settings_get();
+  cpify_settings_apply_theme(app, settings->theme);
 
   CPifyApp *p = g_new0(CPifyApp, 1);
   p->app = app;
@@ -1006,7 +1471,7 @@ CPifyApp *cpify_app_new(AdwApplication *app) {
   p->window = ADW_APPLICATION_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
   gtk_window_set_title(GTK_WINDOW(p->window), "CPify");
   gtk_window_set_default_size(GTK_WINDOW(p->window), 1200, 760);
-  g_signal_connect(p->window, "destroy", G_CALLBACK(on_window_destroy), p);
+  g_signal_connect(p->window, "close-request", G_CALLBACK(on_window_close_request), p);
 
   // Root container
   GtkWidget *root_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -1017,11 +1482,33 @@ CPifyApp *cpify_app_new(AdwApplication *app) {
     adw_window_title_new("CPify", "Media Player"));
   gtk_widget_set_visible(GTK_WIDGET(p->header_bar), FALSE);
 
+  // Sidebar toggle button
+  p->sidebar_toggle = gtk_button_new_from_icon_name("sidebar-hide-symbolic");
+  gtk_widget_set_tooltip_text(p->sidebar_toggle, "Toggle Sidebar");
+  g_signal_connect(p->sidebar_toggle, "clicked", G_CALLBACK(on_sidebar_toggle_clicked), p);
+  adw_header_bar_pack_start(p->header_bar, p->sidebar_toggle);
+
   // Open folder button
   p->open_folder_button = gtk_button_new_with_label("Open Folder");
   gtk_widget_add_css_class(p->open_folder_button, "suggested-action");
   g_signal_connect(p->open_folder_button, "clicked", G_CALLBACK(on_open_folder_clicked), p);
   adw_header_bar_pack_start(p->header_bar, p->open_folder_button);
+
+  // Layout dropdown (Sidebar / Gallery)
+  const char *layout_options[] = {"Sidebar", "Gallery", NULL};
+  p->layout_dropdown = gtk_drop_down_new_from_strings(layout_options);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(p->layout_dropdown), 0);
+  gtk_widget_set_tooltip_text(p->layout_dropdown, "Layout");
+  g_signal_connect(p->layout_dropdown, "notify::selected", G_CALLBACK(on_layout_dropdown_changed), p);
+  adw_header_bar_pack_start(p->header_bar, p->layout_dropdown);
+
+  // Theme dropdown (System / Light / Dark)
+  const char *theme_options[] = {"System", "Light", "Dark", NULL};
+  p->theme_dropdown = gtk_drop_down_new_from_strings(theme_options);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(p->theme_dropdown), 0);
+  gtk_widget_set_tooltip_text(p->theme_dropdown, "Theme");
+  g_signal_connect(p->theme_dropdown, "notify::selected", G_CALLBACK(on_theme_dropdown_changed), p);
+  adw_header_bar_pack_end(p->header_bar, p->theme_dropdown);
 
   // Settings button
   p->settings_button = gtk_button_new_from_icon_name("emblem-system-symbolic");
@@ -1080,6 +1567,46 @@ CPifyApp *cpify_app_new(AdwApplication *app) {
   update_play_button(p);
   visible_reset_all(p);
   p->tick_id = g_timeout_add(250, on_tick, p);
+  
+  // Apply saved settings to UI
+  {
+    CPifySettings *s = cpify_settings_get();
+    
+    // Apply theme dropdown selection
+    guint theme_idx = 0;
+    switch (s->theme) {
+      case CPIFY_THEME_LIGHT: theme_idx = 1; break;
+      case CPIFY_THEME_DARK: theme_idx = 2; break;
+      default: theme_idx = 0; break;
+    }
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(p->theme_dropdown), theme_idx);
+    
+    // Apply layout
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(p->layout_dropdown), (guint)s->layout);
+    if (s->layout == 1) {
+      switch_layout(p, LAYOUT_GALLERY);
+    }
+    
+    // Apply volume and speed to settings popover (they're already built)
+    if (p->volume_scale) {
+      gtk_range_set_value(GTK_RANGE(p->volume_scale), s->volume);
+    }
+    if (p->speed_scale) {
+      gtk_range_set_value(GTK_RANGE(p->speed_scale), s->speed);
+    }
+    if (p->audio_switch) {
+      adw_switch_row_set_active(ADW_SWITCH_ROW(p->audio_switch), s->audio_enabled);
+    }
+    if (p->video_switch) {
+      adw_switch_row_set_active(ADW_SWITCH_ROW(p->video_switch), s->video_enabled);
+    }
+    
+    // Load last folder if available
+    if (s->last_folder && g_file_test(s->last_folder, G_FILE_TEST_IS_DIR)) {
+      load_folder(p, s->last_folder);
+    }
+  }
+  
   return p;
 }
 

@@ -6,23 +6,21 @@
 typedef void (*CPifyPlayerEosCallback)(gpointer user_data);
 
 typedef struct {
-  // GStreamer playbin (used for audio control and seeking)
-  GstElement *playbin;
-  GstElement *video_sink;
+  // GStreamer pipeline
+  GstElement *pipeline;    // playbin3
+  GstElement *video_sink;  // glsinkbin containing gtk4paintablesink
   GstBus *bus;
   guint bus_watch_id;
 
   // GTK4 video display
-  GtkWidget *video_widget;  // GtkVideo or GtkPicture
-  GdkPaintable *paintable;  // From gtk4paintablesink
-  GtkMediaStream *media_stream;  // Alternative: GTK4 native media
+  GtkWidget *video_widget;   // GtkPicture
+  GdkPaintable *paintable;   // From gtk4paintablesink
 
   CPifyPlayerEosCallback eos_cb;
   gpointer eos_cb_data;
 
   gboolean audio_enabled;
   gboolean video_enabled;
-  gboolean use_gtk_media;  // TRUE if using GtkMediaFile instead of playbin
   gdouble volume;  // 0..1
   gdouble rate;    // playback rate (1.0 = normal)
 } CPifyPlayer;

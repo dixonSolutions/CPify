@@ -46,8 +46,8 @@ fi
 meson compile -C "${BUILD_DIR}"
 
 BIN_CANDIDATES=(
-  "${BUILD_DIR}/pypify"
-  "${BUILD_DIR}/src/pypify"
+  "${BUILD_DIR}/cpify"
+  "${BUILD_DIR}/src/cpify"
 )
 
 for bin in "${BIN_CANDIDATES[@]}"; do

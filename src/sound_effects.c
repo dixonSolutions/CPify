@@ -42,14 +42,14 @@ static gboolean on_sound_bus_message(GstBus *bus, GstMessage *msg, gpointer user
   return G_SOURCE_CONTINUE;
 }
 
-void pypify_sound_effects_init(void) {
+void cpify_sound_effects_init(void) {
   // Build the path to the click sound effect
   // Try multiple locations for flexibility
   const gchar *search_paths[] = {
-    PYPIFY_ASSETS_DIR "/ClickSoundEffectForPypify.wav",
-    "assets/ClickSoundEffectForPypify.wav",
-    "../assets/ClickSoundEffectForPypify.wav",
-    "../../assets/ClickSoundEffectForPypify.wav",
+    CPIFY_ASSETS_DIR "/ClickSoundEffect.wav",
+    "assets/ClickSoundEffect.wav",
+    "../assets/ClickSoundEffect.wav",
+    "../../assets/ClickSoundEffect.wav",
     NULL
   };
   
@@ -84,7 +84,7 @@ void pypify_sound_effects_init(void) {
   g_print("[SFX] Sound effects system initialized\n");
 }
 
-void pypify_sound_effects_cleanup(void) {
+void cpify_sound_effects_cleanup(void) {
   if (bus_watch_id) {
     g_source_remove(bus_watch_id);
     bus_watch_id = 0;
@@ -107,7 +107,7 @@ void pypify_sound_effects_cleanup(void) {
   g_print("[SFX] Sound effects system cleaned up\n");
 }
 
-void pypify_play_click_sound(void) {
+void cpify_play_click_sound(void) {
   if (!click_sound_path || !sound_pipeline) {
     return;
   }

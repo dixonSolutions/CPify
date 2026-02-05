@@ -1,0 +1,144 @@
+#include "settings.h"
+#include <gio/gio.h>
+
+static CPifySettings *g_settings = NULL;
+static gchar *g_settings_path = NULL;
+
+static gchar *get_settings_path(void) {
+  if (!g_settings_path) {
+    const gchar *config_dir = g_get_user_config_dir();
+    gchar *app_dir = g_build_filename(config_dir, "cpify", NULL);
+    
+    // Create directory if it doesn't exist
+    g_mkdir_with_parents(app_dir, 0755);
+    
+    g_settings_path = g_build_filename(app_dir, "settings.conf", NULL);
+    g_free(app_dir);
+  }
+  return g_settings_path;
+}
+
+void cpify_settings_init(void) {
+  if (g_settings) return;
+  
+  g_settings = g_new0(CPifySettings, 1);
+  
+  // Set defaults
+  g_settings->theme = CPIFY_THEME_SYSTEM;
+  g_settings->volume = 80.0;
+  g_settings->speed = 100.0;
+  g_settings->audio_enabled = TRUE;
+  g_settings->video_enabled = TRUE;
+  g_settings->layout = 0;  // sidebar
+  g_settings->last_folder = NULL;
+  
+  // Try to load from file
+  GKeyFile *kf = g_key_file_new();
+  GError *err = NULL;
+  
+  if (g_key_file_load_from_file(kf, get_settings_path(), G_KEY_FILE_NONE, &err)) {
+    // Load values
+    if (g_key_file_has_key(kf, "General", "theme", NULL)) {
+      g_settings->theme = (CPifyTheme)g_key_file_get_integer(kf, "General", "theme", NULL);
+    }
+    if (g_key_file_has_key(kf, "General", "layout", NULL)) {
+      g_settings->layout = g_key_file_get_integer(kf, "General", "layout", NULL);
+    }
+    if (g_key_file_has_key(kf, "General", "last_folder", NULL)) {
+      g_settings->last_folder = g_key_file_get_string(kf, "General", "last_folder", NULL);
+    }
+    
+    if (g_key_file_has_key(kf, "Playback", "volume", NULL)) {
+      g_settings->volume = g_key_file_get_double(kf, "Playback", "volume", NULL);
+    }
+    if (g_key_file_has_key(kf, "Playback", "speed", NULL)) {
+      g_settings->speed = g_key_file_get_double(kf, "Playback", "speed", NULL);
+    }
+    if (g_key_file_has_key(kf, "Playback", "audio_enabled", NULL)) {
+      g_settings->audio_enabled = g_key_file_get_boolean(kf, "Playback", "audio_enabled", NULL);
+    }
+    if (g_key_file_has_key(kf, "Playback", "video_enabled", NULL)) {
+      g_settings->video_enabled = g_key_file_get_boolean(kf, "Playback", "video_enabled", NULL);
+    }
+    
+    g_print("[SETTINGS] Loaded settings from %s\n", get_settings_path());
+  } else {
+    g_print("[SETTINGS] No settings file found, using defaults\n");
+    if (err) g_error_free(err);
+  }
+  
+  g_key_file_free(kf);
+}
+
+CPifySettings *cpify_settings_get(void) {
+  if (!g_settings) {
+    cpify_settings_init();
+  }
+  return g_settings;
+}
+
+void cpify_settings_save(void) {
+  if (!g_settings) return;
+  
+  GKeyFile *kf = g_key_file_new();
+  
+  // General settings
+  g_key_file_set_integer(kf, "General", "theme", (gint)g_settings->theme);
+  g_key_file_set_integer(kf, "General", "layout", g_settings->layout);
+  if (g_settings->last_folder) {
+    g_key_file_set_string(kf, "General", "last_folder", g_settings->last_folder);
+  }
+  
+  // Playback settings
+  g_key_file_set_double(kf, "Playback", "volume", g_settings->volume);
+  g_key_file_set_double(kf, "Playback", "speed", g_settings->speed);
+  g_key_file_set_boolean(kf, "Playback", "audio_enabled", g_settings->audio_enabled);
+  g_key_file_set_boolean(kf, "Playback", "video_enabled", g_settings->video_enabled);
+  
+  // Save to file
+  GError *err = NULL;
+  if (!g_key_file_save_to_file(kf, get_settings_path(), &err)) {
+    g_printerr("[SETTINGS] Failed to save: %s\n", err ? err->message : "unknown");
+    if (err) g_error_free(err);
+  } else {
+    g_print("[SETTINGS] Saved settings to %s\n", get_settings_path());
+  }
+  
+  g_key_file_free(kf);
+}
+
+void cpify_settings_cleanup(void) {
+  if (g_settings) {
+    g_free(g_settings->last_folder);
+    g_free(g_settings);
+    g_settings = NULL;
+  }
+  g_free(g_settings_path);
+  g_settings_path = NULL;
+}
+
+void cpify_settings_apply_theme(AdwApplication *app, CPifyTheme theme) {
+  if (!app) return;
+  
+  AdwStyleManager *style_mgr = adw_application_get_style_manager(app);
+  if (!style_mgr) return;
+  
+  switch (theme) {
+    case CPIFY_THEME_LIGHT:
+      adw_style_manager_set_color_scheme(style_mgr, ADW_COLOR_SCHEME_FORCE_LIGHT);
+      break;
+    case CPIFY_THEME_DARK:
+      adw_style_manager_set_color_scheme(style_mgr, ADW_COLOR_SCHEME_FORCE_DARK);
+      break;
+    case CPIFY_THEME_SYSTEM:
+    default:
+      adw_style_manager_set_color_scheme(style_mgr, ADW_COLOR_SCHEME_DEFAULT);
+      break;
+  }
+}
+
+gboolean cpify_settings_is_dark_mode(void) {
+  AdwStyleManager *style_mgr = adw_style_manager_get_default();
+  if (!style_mgr) return FALSE;
+  return adw_style_manager_get_dark(style_mgr);
+}
