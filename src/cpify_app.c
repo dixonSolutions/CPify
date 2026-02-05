@@ -747,12 +747,17 @@ static void on_player_eos(gpointer user_data) {
 }
 
 // Thumbnail generation callback with debounced gallery refresh
-// NOTE: This is always called on the main thread via g_idle_add(), so no mutex needed
+// Protected by mutex even though g_idle_add ensures main thread execution,
+// for extra safety against potential race conditions
+static GMutex gallery_refresh_mutex;
 static guint gallery_refresh_timer = 0;
 
 static gboolean refresh_gallery_idle(gpointer user_data) {
   CPifyApp *p = (CPifyApp *)user_data;
+  
+  g_mutex_lock(&gallery_refresh_mutex);
   gallery_refresh_timer = 0;
+  g_mutex_unlock(&gallery_refresh_mutex);
   
   if (p && p->current_layout == LAYOUT_GALLERY) {
     populate_gallery(p);
@@ -769,10 +774,12 @@ static void on_thumbnail_generated(CPifyTrack *track, gpointer user_data) {
   
   // Debounce gallery refresh - only refresh after 200ms of no updates
   if (p->current_layout == LAYOUT_GALLERY) {
+    g_mutex_lock(&gallery_refresh_mutex);
     if (gallery_refresh_timer != 0) {
       g_source_remove(gallery_refresh_timer);
     }
     gallery_refresh_timer = g_timeout_add(200, refresh_gallery_idle, p);
+    g_mutex_unlock(&gallery_refresh_mutex);
   }
 }
 
@@ -1424,10 +1431,12 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
     g_source_remove(p->tick_id);
     p->tick_id = 0;
   }
+  g_mutex_lock(&gallery_refresh_mutex);
   if (gallery_refresh_timer != 0) {
     g_source_remove(gallery_refresh_timer);
     gallery_refresh_timer = 0;
   }
+  g_mutex_unlock(&gallery_refresh_mutex);
   if (p->player) {
     cpify_player_free(p->player);
     p->player = NULL;
@@ -1447,6 +1456,7 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
   cpify_sound_effects_cleanup();
   cpify_settings_cleanup();
   cpify_updater_cleanup();
+  g_mutex_clear(&gallery_refresh_mutex);
   g_free(p);
   
   return FALSE;  // Allow window to close
@@ -1489,6 +1499,9 @@ CPifyApp *cpify_app_new(AdwApplication *app) {
   cpify_sound_effects_init();
   cpify_settings_init();
   cpify_updater_init();
+  
+  // Initialize gallery refresh mutex
+  g_mutex_init(&gallery_refresh_mutex);
 
   // Apply saved theme immediately
   CPifySettings *settings = cpify_settings_get();
