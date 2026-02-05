@@ -356,8 +356,15 @@ void cpify_generate_thumbnails_batch(GPtrArray *tracks,
   // Queue all video tracks for parallel processing
   for (guint i = 0; i < tracks->len; i++) {
     CPifyTrack *track = g_ptr_array_index(tracks, i);
-    if (track && track->is_video && !track->thumbnail) {
-      cpify_track_generate_thumbnail_async(track, callback, user_data);
+    if (track && track->is_video) {
+      // Thread-safe check for existing thumbnail
+      g_mutex_lock(&track->thumbnail_mutex);
+      gboolean has_thumbnail = (track->thumbnail != NULL);
+      g_mutex_unlock(&track->thumbnail_mutex);
+      
+      if (!has_thumbnail) {
+        cpify_track_generate_thumbnail_async(track, callback, user_data);
+      }
     }
   }
 }
