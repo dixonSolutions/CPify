@@ -8,8 +8,8 @@ This is a **C + GTK4** media player application.
 - Recursively scans for common **audio + video** files
 - Lists the files and lets you **play / pause / next / prev**
 - Provides **shuffle** and **repeat** toggles
-- Uses **GStreamer** for playback (via GTK4's GtkMediaFile)
-- **Embedded video** display within the application window
+- Uses **GStreamer** for playback
+- **Embedded video** display using GTK4's GtkMediaFile
 
 ## Dev setup (Fedora)
 
