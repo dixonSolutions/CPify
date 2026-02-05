@@ -1,0 +1,5 @@
+[Runtime]
+name=com.github.dixonsolutions.CPify.Debug
+
+[ExtensionOf]
+ref=app/com.github.dixonsolutions.CPify/x86_64/master

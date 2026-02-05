@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<components version="0.8" origin="flatpak">
+  <component type="desktop-application">
+    <id>com.github.dixonsolutions.CPify</id>
+    <name>CPify</name>
+    <summary>Play music and videos offline</summary>
+    <project_license>GPL-3.0-or-later</project_license>
+    <description>
+      <p>
+      CPify is a modern media player built with GTK4 and libadwaita. 
+      Play your local music and video files with a beautiful, intuitive interface.
+    </p>
+      <p>Features:</p>
+      <ul>
+        <li>Scan folders for audio and video files</li>
+        <li>Sidebar and gallery view layouts</li>
+        <li>Shuffle and repeat playback modes</li>
+        <li>Video thumbnail generation</li>
+        <li>Light, dark, and system theme support</li>
+        <li>Automatic update checking</li>
+      </ul>
+    </description>
+    <developer id="com.github.dixonsolutions">
+      <name>Dixon Solutions</name>
+    </developer>
+    <developer_name>Dixon Solutions</developer_name>
+    <requires>
+      <display_length>360</display_length>
+    </requires>
+    <recommends>
+      <control>keyboard</control>
+      <control>pointing</control>
+    </recommends>
+    <launchable type="desktop-id">com.github.dixonsolutions.CPify.desktop</launchable>
+    <icon type="cached" width="48" height="48">com.github.dixonsolutions.CPify.png</icon>
+    <icon type="cached" width="64" height="64">com.github.dixonsolutions.CPify.png</icon>
+    <icon type="cached" width="64" height="64" scale="2">com.github.dixonsolutions.CPify.png</icon>
+    <icon type="cached" width="128" height="128">com.github.dixonsolutions.CPify.png</icon>
+    <icon type="cached" width="128" height="128" scale="2">com.github.dixonsolutions.CPify.png</icon>
+    <icon type="stock">com.github.dixonsolutions.CPify</icon>
+    <url type="homepage">https://github.com/dixonSolutions/CPify</url>
+    <url type="bugtracker">https://github.com/dixonSolutions/CPify/issues</url>
+    <categories>
+      <category>AudioVideo</category>
+      <category>Audio</category>
+      <category>Video</category>
+      <category>Player</category>
+    </categories>
+    <provides>
+      <binary>cpify</binary>
+    </provides>
+    <keywords>
+      <keyword>music</keyword>
+      <keyword>video</keyword>
+      <keyword>media</keyword>
+      <keyword>player</keyword>
+      <keyword>audio</keyword>
+    </keywords>
+    <branding>
+      <color type="primary" scheme_preference="light">#62a0ea</color>
+      <color type="primary" scheme_preference="dark">#1c71d8</color>
+    </branding>
+    <releases>
+      <release type="stable" version="0.0.1" timestamp="1770249600">
+        <description>
+          <p>Initial release of CPify</p>
+          <ul>
+            <li>Media folder scanning</li>
+            <li>Audio and video playback</li>
+            <li>Sidebar and gallery layouts</li>
+            <li>Theme support</li>
+            <li>Auto-update system</li>
+          </ul>
+        </description>
+      </release>
+    </releases>
+    <content_rating type="oars-1.1"/>
+    <bundle type="flatpak" runtime="org.gnome.Platform/x86_64/47" sdk="org.gnome.Sdk/x86_64/47">app/com.github.dixonsolutions.CPify/x86_64/master</bundle>
+  </component>
+</components>

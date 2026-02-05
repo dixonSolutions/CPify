@@ -6,17 +6,25 @@ srcs = files(
   'settings.c',
   'sound_effects.c',
   'splash_screen.c',
+  'updater.c',
 )
-
-incs = include_directories('.')
-
-# Include directory for config.h
-config_inc = include_directories('..')
 
 executable(
   'cpify',
   srcs,
-  include_directories: [incs, config_inc],
-  dependencies: [gtk, adw, gst, gst_video, gst_audio, gio, glib, gdk_pixbuf, libm],
-  install: false,
+  dependencies: [
+    config_dep,
+    gtk,
+    adw,
+    gst,
+    gst_video,
+    gst_audio,
+    gio,
+    glib,
+    gdk_pixbuf,
+    libm,
+    libsoup,
+    json_glib,
+  ],
+  install: true,
 )

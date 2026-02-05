@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=CPify
+Comment=Play music and videos offline
+Exec=cpify
+Icon=com.github.dixonsolutions.CPify
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Video;Player;
+Keywords=music;video;media;player;audio;
+StartupNotify=true

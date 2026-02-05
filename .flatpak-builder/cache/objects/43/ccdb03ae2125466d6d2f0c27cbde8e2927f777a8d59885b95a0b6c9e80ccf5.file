@@ -1,0 +1,47 @@
+{
+  "id" : "com.github.dixonsolutions.CPify",
+  "runtime" : "org.gnome.Platform",
+  "runtime-version" : "47",
+  "runtime-commit" : "7d00756d7d5f6397c54f09ac69521991cff9e40a31e6eca6bf61ae9864149380",
+  "sdk" : "org.gnome.Sdk",
+  "sdk-commit" : "fb298c9ea35750b1037f755885076d16ffeed5462b4cee83705b6007474b0307",
+  "command" : "cpify",
+  "modules" : [
+    {
+      "name" : "cpify",
+      "buildsystem" : "meson",
+      "config-opts" : [
+        "-Dbuildtype=release"
+      ],
+      "sources" : [
+        {
+          "path" : ".",
+          "type" : "dir"
+        }
+      ]
+    }
+  ],
+  "cleanup" : [
+    "/include",
+    "/lib/pkgconfig",
+    "/man",
+    "/share/doc",
+    "/share/gtk-doc",
+    "/share/man",
+    "/share/pkgconfig",
+    "*.la",
+    "*.a"
+  ],
+  "finish-args" : [
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--socket=pulseaudio",
+    "--filesystem=home:ro",
+    "--filesystem=xdg-music:ro",
+    "--filesystem=xdg-videos:ro",
+    "--share=network",
+    "--device=dri"
+  ],
+  "source-date-epoch" : 1770267881
+}

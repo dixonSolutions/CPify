@@ -1,0 +1,19 @@
+[Application]
+name=com.github.dixonsolutions.CPify
+runtime=org.gnome.Platform/x86_64/47
+sdk=org.gnome.Sdk/x86_64/47
+command=cpify
+
+[Context]
+shared=network;ipc;
+sockets=x11;wayland;pulseaudio;fallback-x11;
+devices=dri;
+filesystems=home:ro;xdg-music:ro;xdg-videos:ro;
+
+[Extension com.github.dixonsolutions.CPify.Debug]
+directory=lib/debug
+autodelete=true
+no-autodownload=true
+
+[Build]
+built-extensions=com.github.dixonsolutions.CPify.Debug;

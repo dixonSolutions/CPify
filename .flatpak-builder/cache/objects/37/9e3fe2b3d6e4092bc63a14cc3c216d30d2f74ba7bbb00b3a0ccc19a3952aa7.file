@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.dixonsolutions.CPify</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  
+  <name>CPify</name>
+  <summary>Play music and videos offline</summary>
+  
+  <description>
+    <p>
+      CPify is a modern media player built with GTK4 and libadwaita. 
+      Play your local music and video files with a beautiful, intuitive interface.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Scan folders for audio and video files</li>
+      <li>Sidebar and gallery view layouts</li>
+      <li>Shuffle and repeat playback modes</li>
+      <li>Video thumbnail generation</li>
+      <li>Light, dark, and system theme support</li>
+      <li>Automatic update checking</li>
+    </ul>
+  </description>
+  
+  <launchable type="desktop-id">com.github.dixonsolutions.CPify.desktop</launchable>
+  
+  <url type="homepage">https://github.com/dixonSolutions/CPify</url>
+  <url type="bugtracker">https://github.com/dixonSolutions/CPify/issues</url>
+  
+  <developer id="com.github.dixonsolutions">
+    <name>Dixon Solutions</name>
+  </developer>
+  
+  <branding>
+    <color type="primary" scheme_preference="light">#62a0ea</color>
+    <color type="primary" scheme_preference="dark">#1c71d8</color>
+  </branding>
+  
+  <content_rating type="oars-1.1" />
+  
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+  
+  <releases>
+    <release version="0.0.1" date="2026-02-05">
+      <description>
+        <p>Initial release of CPify</p>
+        <ul>
+          <li>Media folder scanning</li>
+          <li>Audio and video playback</li>
+          <li>Sidebar and gallery layouts</li>
+          <li>Theme support</li>
+          <li>Auto-update system</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  
+  <provides>
+    <binary>cpify</binary>
+  </provides>
+</component>
