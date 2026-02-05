@@ -227,6 +227,10 @@ GPtrArray *cpify_scan_folder(const gchar *folder_path, GError **error) {
 
 // ==== Async Thumbnail Generation ====
 
+// Configuration constants
+#define MIN_THUMBNAIL_THREADS 2
+#define MAX_THUMBNAIL_THREADS 8
+
 // Thread pool for parallel thumbnail generation
 G_LOCK_DEFINE_STATIC(thumbnail_pool);
 static GThreadPool *thumbnail_thread_pool = NULL;
@@ -285,9 +289,9 @@ static void ensure_thread_pool_initialized(void) {
     GError *error = NULL;
     // Create thread pool with max threads = number of CPU cores
     gint max_threads = g_get_num_processors();
-    // Use at least 2 threads, but cap at 8 to avoid excessive resource usage
-    if (max_threads < 2) max_threads = 2;
-    if (max_threads > 8) max_threads = 8;
+    // Use at least MIN threads, but cap at MAX to avoid excessive resource usage
+    if (max_threads < MIN_THUMBNAIL_THREADS) max_threads = MIN_THUMBNAIL_THREADS;
+    if (max_threads > MAX_THUMBNAIL_THREADS) max_threads = MAX_THUMBNAIL_THREADS;
     
     thumbnail_thread_pool = g_thread_pool_new(
       thumbnail_worker,
@@ -373,7 +377,9 @@ void cpify_thumbnail_cleanup(void) {
   G_LOCK(thumbnail_pool);
   
   if (thumbnail_thread_pool) {
-    g_thread_pool_free(thumbnail_thread_pool, FALSE, TRUE);
+    // Use TRUE to cancel pending tasks immediately to avoid use-after-free
+    // when tracks are freed during shutdown
+    g_thread_pool_free(thumbnail_thread_pool, TRUE, TRUE);
     thumbnail_thread_pool = NULL;
   }
   pool_initialized = FALSE;

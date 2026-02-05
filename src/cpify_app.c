@@ -747,6 +747,7 @@ static void on_player_eos(gpointer user_data) {
 }
 
 // Thumbnail generation callback with debounced gallery refresh
+// NOTE: This is always called on the main thread via g_idle_add(), so no mutex needed
 static guint gallery_refresh_timer = 0;
 
 static gboolean refresh_gallery_idle(gpointer user_data) {
