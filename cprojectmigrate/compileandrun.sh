@@ -16,9 +16,15 @@ if ! command -v pkg-config >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! pkg-config --exists gtk+-3.0; then
-  echo "GTK3 development files not found (gtk+-3.0.pc missing)." >&2
-  echo "Install: sudo dnf install -y gtk3-devel" >&2
+if ! pkg-config --exists gtk4; then
+  echo "GTK4 development files not found (gtk4.pc missing)." >&2
+  echo "Install: sudo dnf install -y gtk4-devel" >&2
+  exit 1
+fi
+
+if ! pkg-config --exists libadwaita-1; then
+  echo "libadwaita development files not found (libadwaita-1.pc missing)." >&2
+  echo "Install: sudo dnf install -y libadwaita-devel" >&2
   exit 1
 fi
 

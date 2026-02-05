@@ -12,11 +12,26 @@ project(
 cc = meson.get_compiler('c')
 libm = cc.find_library('m', required: true)
 
-gtk = dependency('gtk+-3.0', version: '>=3.24')
+# GTK 4 + libadwaita for modern GNOME UI
+gtk = dependency('gtk4', version: '>=4.10')
+adw = dependency('libadwaita-1', version: '>=1.4')
+
+# GStreamer for media playback and sound effects
 gst = dependency('gstreamer-1.0', version: '>=1.18')
 gst_video = dependency('gstreamer-video-1.0', version: '>=1.18')
+gst_audio = dependency('gstreamer-audio-1.0', version: '>=1.18')
 gio = dependency('gio-2.0')
 glib = dependency('glib-2.0')
 
-subdir('src')
+# Asset installation path
+assets_dir = meson.current_source_dir() / 'assets'
 
+conf_data = configuration_data()
+conf_data.set_quoted('PYPIFY_ASSETS_DIR', assets_dir)
+
+config_h = configure_file(
+  output: 'config.h',
+  configuration: conf_data,
+)
+
+subdir('src')

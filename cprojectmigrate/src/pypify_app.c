@@ -1,4 +1,5 @@
 #include "pypify_app.h"
+#include "config.h"
 
 #include <gst/gst.h>
 #include <math.h>
@@ -6,16 +7,15 @@
 
 #include "media_scanner.h"
 #include "player.h"
-
-enum {
-  ROW_DATA_TRACK_INDEX = 1,
-};
+#include "sound_effects.h"
 
 struct _PypifyApp {
-  GtkApplication *app;
-  GtkWidget *window;
+  AdwApplication *app;
+  AdwApplicationWindow *window;
+  AdwToastOverlay *toast_overlay;
 
-  // Header
+  // Header bar
+  AdwHeaderBar *header_bar;
   GtkWidget *open_folder_button;
   GtkWidget *settings_button;
   GtkWidget *settings_popover;
@@ -27,7 +27,7 @@ struct _PypifyApp {
   // Center
   GtkWidget *now_playing_label;
   GtkWidget *video_stack;
-  GtkWidget *video_widget; // added lazily when player initializes
+  GtkWidget *video_widget;
   GtkWidget *video_disabled_label;
   GtkWidget *time_label;
   GtkWidget *progress_scale;
@@ -52,8 +52,8 @@ struct _PypifyApp {
   GtkWidget *status_label;
 
   gchar *current_folder;
-  GPtrArray *tracks;      // PypifyTrack*
-  GArray *visible_tracks; // gint track_index (filters/search)
+  GPtrArray *tracks;
+  GArray *visible_tracks;
   gint current_track_index;
   gboolean is_playing;
 
@@ -62,22 +62,36 @@ struct _PypifyApp {
   PypifyPlayer *player;
 };
 
-// Forward declarations (needed for lazy-init paths)
+// Forward declarations
 static void on_player_eos(gpointer user_data);
+static void play_track_index(PypifyApp *p, gint track_index);
+static void on_search_changed(GtkEditable *editable, gpointer user_data);
+
+static void show_toast(PypifyApp *p, const gchar *message) {
+  if (!p || !p->toast_overlay) return;
+  AdwToast *toast = adw_toast_new(message);
+  adw_toast_set_timeout(toast, 3);
+  adw_toast_overlay_add_toast(p->toast_overlay, toast);
+}
 
 static void set_status(PypifyApp *p, const gchar *text) {
+  if (!p || !p->status_label) return;
   gtk_label_set_text(GTK_LABEL(p->status_label), text ? text : "");
 }
 
 static void update_play_button(PypifyApp *p) {
-  gtk_button_set_label(GTK_BUTTON(p->play_pause_button), p->is_playing ? "Pause" : "Play");
+  if (!p || !p->play_pause_button) return;
+  gtk_button_set_icon_name(GTK_BUTTON(p->play_pause_button), 
+    p->is_playing ? "media-playback-pause-symbolic" : "media-playback-start-symbolic");
 }
 
 static gboolean get_shuffle(PypifyApp *p) {
+  if (!p || !p->shuffle_toggle) return FALSE;
   return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->shuffle_toggle));
 }
 
 static gboolean get_repeat(PypifyApp *p) {
+  if (!p || !p->repeat_toggle) return FALSE;
   return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->repeat_toggle));
 }
 
@@ -108,32 +122,35 @@ static gint visible_find_pos(PypifyApp *p, gint track_index) {
 }
 
 static void clear_listbox(PypifyApp *p) {
-  GList *children = gtk_container_get_children(GTK_CONTAINER(p->listbox));
-  for (GList *l = children; l; l = l->next) {
-    gtk_widget_destroy(GTK_WIDGET(l->data));
-  }
-  g_list_free(children);
+  if (!p || !p->listbox) return;
+  // In GTK 4.12+, use gtk_list_box_remove_all
+  gtk_list_box_remove_all(GTK_LIST_BOX(p->listbox));
 }
 
 static void update_list_playing_icons(PypifyApp *p) {
-  GList *rows = gtk_container_get_children(GTK_CONTAINER(p->listbox));
-  for (GList *l = rows; l; l = l->next) {
-    GtkWidget *row = GTK_WIDGET(l->data);
+  if (!p || !p->listbox) return;
+  // Iterate using gtk_list_box_get_row_at_index for GTK 4 compatibility
+  for (gint i = 0; ; i++) {
+    GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(p->listbox), i);
+    if (!row) break;
+    
     GtkWidget *img = g_object_get_data(G_OBJECT(row), "play-icon");
     gint idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "track-index"));
-    if (!img) continue;
-    if (idx == p->current_track_index && p->is_playing) {
-      gtk_image_set_from_icon_name(GTK_IMAGE(img), "media-playback-start-symbolic", GTK_ICON_SIZE_MENU);
-    } else {
-      gtk_image_clear(GTK_IMAGE(img));
+    if (img && GTK_IS_IMAGE(img)) {
+      if (idx == p->current_track_index && p->is_playing) {
+        gtk_image_set_from_icon_name(GTK_IMAGE(img), "media-playback-start-symbolic");
+      } else {
+        gtk_image_clear(GTK_IMAGE(img));
+      }
     }
   }
-  g_list_free(rows);
 }
 
 static void set_now_playing(PypifyApp *p, const gchar *title) {
+  if (!p || !p->now_playing_label) return;
   if (!title || title[0] == '\0') {
-    gtk_label_set_markup(GTK_LABEL(p->now_playing_label), "<span size='x-large' weight='bold'>Choose a song</span>");
+    gtk_label_set_markup(GTK_LABEL(p->now_playing_label), 
+      "<span size='x-large' weight='bold'>Choose a song</span>");
     return;
   }
   gchar *escaped = g_markup_escape_text(title, -1);
@@ -144,8 +161,9 @@ static void set_now_playing(PypifyApp *p, const gchar *title) {
 }
 
 static void populate_listbox(PypifyApp *p) {
+  if (!p) return;
   clear_listbox(p);
-  if (!p->tracks || !p->visible_tracks) return;
+  if (!p->tracks || !p->visible_tracks || !p->listbox) return;
 
   for (guint i = 0; i < p->visible_tracks->len; i++) {
     gint track_index = visible_get_track_index(p, i);
@@ -156,10 +174,10 @@ static void populate_listbox(PypifyApp *p) {
     g_object_set_data(G_OBJECT(row), "track-index", GINT_TO_POINTER(track_index));
 
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_margin_top(box, 6);
-    gtk_widget_set_margin_bottom(box, 6);
-    gtk_widget_set_margin_start(box, 10);
-    gtk_widget_set_margin_end(box, 10);
+    gtk_widget_set_margin_top(box, 8);
+    gtk_widget_set_margin_bottom(box, 8);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 12);
 
     GtkWidget *icon = gtk_image_new();
     gtk_widget_set_size_request(icon, 18, -1);
@@ -168,13 +186,12 @@ static void populate_listbox(PypifyApp *p) {
     GtkWidget *label = gtk_label_new(t && t->title ? t->title : "(unknown)");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
     gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(label, TRUE);
 
-    gtk_box_pack_start(GTK_BOX(box), icon, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), label, TRUE, TRUE, 0);
-
-    gtk_container_add(GTK_CONTAINER(row), box);
-    gtk_widget_show_all(row);
-    gtk_container_add(GTK_CONTAINER(p->listbox), row);
+    gtk_box_append(GTK_BOX(box), icon);
+    gtk_box_append(GTK_BOX(box), label);
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+    gtk_list_box_append(GTK_LIST_BOX(p->listbox), row);
   }
 
   update_list_playing_icons(p);
@@ -226,21 +243,23 @@ static gboolean ensure_player(PypifyApp *p) {
   if (!p) return FALSE;
   if (p->player) return TRUE;
 
-  // Lazy-init the player to avoid startup crashes on systems with quirky video sinks.
   p->player = pypify_player_new();
   if (!p->player) {
-    set_status(p, "Playback unavailable (GStreamer playbin failed to initialize).");
+    show_toast(p, "Playback unavailable (GStreamer failed to initialize)");
     return FALSE;
   }
   pypify_player_set_eos_callback(p->player, on_player_eos, p);
 
-  // Lazily add the video widget to the stack once we have a player.
+  // Add the video widget to the stack
   if (!p->video_widget && p->video_stack) {
     GtkWidget *vw = pypify_player_get_video_widget(p->player);
     if (vw) {
       p->video_widget = vw;
+      gtk_widget_set_size_request(p->video_widget, 320, 180);
+      gtk_widget_set_hexpand(p->video_widget, TRUE);
+      gtk_widget_set_vexpand(p->video_widget, TRUE);
       gtk_stack_add_named(GTK_STACK(p->video_stack), p->video_widget, "video");
-      gtk_widget_show_all(p->video_stack);
+      gtk_stack_set_visible_child(GTK_STACK(p->video_stack), p->video_widget);
     }
   }
 
@@ -250,14 +269,14 @@ static gboolean ensure_player(PypifyApp *p) {
 static void apply_settings_to_player(PypifyApp *p) {
   if (!p) return;
   if (!p->player) {
-    // No player: keep UI stable and avoid dereferencing NULL.
     gtk_stack_set_visible_child(GTK_STACK(p->video_stack), p->video_disabled_label);
     return;
   }
+
   gdouble vol = gtk_range_get_value(GTK_RANGE(p->volume_scale)) / 100.0;
   gdouble rate = gtk_range_get_value(GTK_RANGE(p->speed_scale)) / 100.0;
-  gboolean audio_on = gtk_switch_get_active(GTK_SWITCH(p->audio_switch));
-  gboolean video_on = gtk_switch_get_active(GTK_SWITCH(p->video_switch));
+  gboolean audio_on = adw_switch_row_get_active(ADW_SWITCH_ROW(p->audio_switch));
+  gboolean video_on = adw_switch_row_get_active(ADW_SWITCH_ROW(p->video_switch));
 
   pypify_player_set_volume(p->player, vol);
   pypify_player_set_audio_enabled(p->player, audio_on);
@@ -271,8 +290,7 @@ static void apply_settings_to_player(PypifyApp *p) {
     gtk_stack_set_visible_child(GTK_STACK(p->video_stack), vw);
   }
 
-  // Make audio/video toggles effective immediately during playback by reloading the URI
-  // while preserving position. (Player flags are always applied on set_path.)
+  // Reload URI to apply audio/video flags during playback
   if (p->tracks && p->current_track_index >= 0 && p->current_track_index < (gint)p->tracks->len) {
     PypifyTrack *t = g_ptr_array_index(p->tracks, (guint)p->current_track_index);
     if (t && t->path) {
@@ -284,11 +302,8 @@ static void apply_settings_to_player(PypifyApp *p) {
       GError *err = NULL;
       if (pypify_player_set_path(p->player, t->path, &err)) {
         if (have_pos) pypify_player_seek_to(p->player, pos_s);
-        if (should_play) {
-          pypify_player_play(p->player);
-        } else {
-          pypify_player_pause(p->player);
-        }
+        if (should_play) pypify_player_play(p->player);
+        else pypify_player_pause(p->player);
       } else if (err) {
         g_error_free(err);
       }
@@ -309,7 +324,7 @@ static void play_track_index(PypifyApp *p, gint track_index) {
   GError *err = NULL;
   if (!pypify_player_set_path(p->player, t->path, &err)) {
     gchar *msg = g_strdup_printf("Unable to play: %s", err ? err->message : "unknown error");
-    set_status(p, msg);
+    show_toast(p, msg);
     g_free(msg);
     if (err) g_error_free(err);
     return;
@@ -385,6 +400,7 @@ static void on_player_eos(gpointer user_data) {
 }
 
 static void load_folder(PypifyApp *p, const gchar *folder) {
+  g_print("[DEBUG] load_folder: called with folder='%s'\n", folder ? folder : "(null)");
   if (!p || !folder) return;
 
   g_free(p->current_folder);
@@ -396,89 +412,100 @@ static void load_folder(PypifyApp *p, const gchar *folder) {
   }
 
   set_status(p, "Scanning folder…");
-  while (gtk_events_pending()) gtk_main_iteration();
 
+  g_print("[DEBUG] load_folder: scanning...\n");
   GError *err = NULL;
   p->tracks = pypify_scan_folder(folder, &err);
   if (!p->tracks) {
     gchar *msg = g_strdup_printf("Scan failed: %s", err ? err->message : "unknown error");
-    set_status(p, msg);
+    show_toast(p, msg);
     g_free(msg);
     if (err) g_error_free(err);
     return;
   }
+  g_print("[DEBUG] load_folder: found %u tracks\n", p->tracks->len);
 
-  gtk_entry_set_text(GTK_ENTRY(p->search_entry), "");
+  // Block search signal while we update the entry
+  g_print("[DEBUG] load_folder: clearing search entry...\n");
+  if (p->search_entry) {
+    g_signal_handlers_block_by_func(p->search_entry, on_search_changed, p);
+    gtk_editable_set_text(GTK_EDITABLE(p->search_entry), "");
+    g_signal_handlers_unblock_by_func(p->search_entry, on_search_changed, p);
+  }
+  
+  g_print("[DEBUG] load_folder: visible_reset_all...\n");
   visible_reset_all(p);
+  
+  g_print("[DEBUG] load_folder: populate_listbox...\n");
   populate_listbox(p);
 
   p->current_track_index = -1;
   p->is_playing = FALSE;
+  
+  g_print("[DEBUG] load_folder: updating UI...\n");
   update_play_button(p);
   set_now_playing(p, NULL);
   update_list_playing_icons(p);
 
-  gchar *status = g_strdup_printf("Loaded %u media file(s) from: %s", p->tracks->len, folder);
+  gchar *status = g_strdup_printf("Loaded %u media file(s)", p->tracks->len);
   set_status(p, status);
   g_free(status);
+  g_print("[DEBUG] load_folder: done\n");
+}
+
+static void on_folder_selected(GObject *source, GAsyncResult *result, gpointer user_data) {
+  GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+  PypifyApp *p = (PypifyApp *)user_data;
+  
+  GError *error = NULL;
+  GFile *folder = gtk_file_dialog_select_folder_finish(dialog, result, &error);
+  
+  if (folder) {
+    gchar *path = g_file_get_path(folder);
+    if (path) {
+      load_folder(p, path);
+      g_free(path);
+    }
+    g_object_unref(folder);
+  } else if (error && !g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED)) {
+    show_toast(p, error->message);
+    g_error_free(error);
+  }
 }
 
 static void open_folder_dialog(PypifyApp *p) {
-  GtkWidget *dlg = gtk_file_chooser_dialog_new(
-      "Select a media folder",
-      GTK_WINDOW(p->window),
-      GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-      "_Cancel",
-      GTK_RESPONSE_CANCEL,
-      "_Open",
-      GTK_RESPONSE_ACCEPT,
-      NULL
-  );
-
-  gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(dlg), TRUE);
-  gtk_file_chooser_set_create_folders(GTK_FILE_CHOOSER(dlg), FALSE);
+  GtkFileDialog *dialog = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dialog, "Select a media folder");
+  gtk_file_dialog_set_modal(dialog, TRUE);
+  
   if (p->current_folder) {
-    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), p->current_folder);
+    GFile *initial = g_file_new_for_path(p->current_folder);
+    gtk_file_dialog_set_initial_folder(dialog, initial);
+    g_object_unref(initial);
   }
-
-  gint res = gtk_dialog_run(GTK_DIALOG(dlg));
-  if (res == GTK_RESPONSE_ACCEPT) {
-    gchar *folder = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
-    gtk_widget_destroy(dlg);
-    if (folder) {
-      load_folder(p, folder);
-      g_free(folder);
-    }
-    return;
-  }
-  gtk_widget_destroy(dlg);
+  
+  gtk_file_dialog_select_folder(dialog, GTK_WINDOW(p->window), NULL, on_folder_selected, p);
+  g_object_unref(dialog);
 }
 
-static gboolean open_folder_on_startup(gpointer user_data) {
-  PypifyApp *p = (PypifyApp *)user_data;
-  open_folder_dialog(p);
-  if (!p->current_folder) {
-    g_application_quit(G_APPLICATION(p->app));
-  }
-  return G_SOURCE_REMOVE;
-}
-
+// Button click handlers with sound effects
 static void on_open_folder_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+  pypify_play_click_sound();
   open_folder_dialog((PypifyApp *)user_data);
 }
 
 static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
   (void)box;
+  pypify_play_click_sound();
   PypifyApp *p = (PypifyApp *)user_data;
   gint track_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "track-index"));
   play_track_index(p, track_index);
 }
 
 static void on_search_changed(GtkEditable *editable, gpointer user_data) {
-  (void)editable;
   PypifyApp *p = (PypifyApp *)user_data;
-  const gchar *q = gtk_entry_get_text(GTK_ENTRY(p->search_entry));
+  const gchar *q = gtk_editable_get_text(editable);
   visible_apply_search(p, q);
   populate_listbox(p);
   update_list_playing_icons(p);
@@ -486,6 +513,7 @@ static void on_search_changed(GtkEditable *editable, gpointer user_data) {
 
 static void on_play_pause_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+  pypify_play_click_sound();
   PypifyApp *p = (PypifyApp *)user_data;
   if (!p->tracks || p->tracks->len == 0) return;
   if (!ensure_player(p)) return;
@@ -510,16 +538,19 @@ static void on_play_pause_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_next_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+  pypify_play_click_sound();
   play_next((PypifyApp *)user_data);
 }
 
 static void on_prev_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+  pypify_play_click_sound();
   play_prev((PypifyApp *)user_data);
 }
 
 static void on_skip_back_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+  pypify_play_click_sound();
   PypifyApp *p = (PypifyApp *)user_data;
   if (!p || !p->player || p->current_track_index < 0) return;
   pypify_player_seek_relative(p->player, -10.0);
@@ -527,37 +558,71 @@ static void on_skip_back_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_skip_forward_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+  pypify_play_click_sound();
   PypifyApp *p = (PypifyApp *)user_data;
   if (!p || !p->player || p->current_track_index < 0) return;
   pypify_player_seek_relative(p->player, 10.0);
 }
 
-static gboolean on_progress_button_press(GtkWidget *w, GdkEventButton *ev, gpointer user_data) {
-  (void)w;
-  (void)ev;
-  ((PypifyApp *)user_data)->progress_dragging = TRUE;
-  return FALSE;
+static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  pypify_play_click_sound();
+  PypifyApp *p = (PypifyApp *)user_data;
+  gtk_popover_popup(GTK_POPOVER(p->settings_popover));
 }
 
-static gboolean on_progress_button_release(GtkWidget *w, GdkEventButton *ev, gpointer user_data) {
-  (void)w;
-  (void)ev;
+static void on_shuffle_toggled(GtkToggleButton *btn, gpointer user_data) {
+  (void)btn;
+  (void)user_data;
+  pypify_play_click_sound();
+}
+
+static void on_repeat_toggled(GtkToggleButton *btn, gpointer user_data) {
+  (void)btn;
+  (void)user_data;
+  pypify_play_click_sound();
+}
+
+// Progress bar drag handling using GtkGestureClick
+static void on_progress_drag_begin(GtkGestureDrag *gesture, gdouble x, gdouble y, gpointer user_data) {
+  (void)gesture;
+  (void)x;
+  (void)y;
+  ((PypifyApp *)user_data)->progress_dragging = TRUE;
+}
+
+static void on_progress_drag_end(GtkGestureDrag *gesture, gdouble x, gdouble y, gpointer user_data) {
+  (void)gesture;
+  (void)x;
+  (void)y;
   PypifyApp *p = (PypifyApp *)user_data;
   p->progress_dragging = FALSE;
-  if (!p->player || p->current_track_index < 0) return FALSE;
+  if (!p->player || p->current_track_index < 0) return;
   gdouble seconds = gtk_range_get_value(GTK_RANGE(p->progress_scale));
   pypify_player_seek_to(p->player, seconds);
-  return FALSE;
 }
 
-static void on_range_value_changed(GtkRange *range, gpointer user_data) {
+static void on_volume_changed(GtkRange *range, gpointer user_data) {
   (void)range;
   apply_settings_to_player((PypifyApp *)user_data);
 }
 
-static void on_switch_active_notify(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+static void on_speed_changed(GtkRange *range, gpointer user_data) {
+  (void)range;
+  apply_settings_to_player((PypifyApp *)user_data);
+}
+
+static void on_audio_switch_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)obj;
   (void)pspec;
+  pypify_play_click_sound();
+  apply_settings_to_player((PypifyApp *)user_data);
+}
+
+static void on_video_switch_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)obj;
+  (void)pspec;
+  pypify_play_click_sound();
   apply_settings_to_player((PypifyApp *)user_data);
 }
 
@@ -589,108 +654,103 @@ static gboolean on_tick(gpointer user_data) {
   return G_SOURCE_CONTINUE;
 }
 
-static GtkWidget *build_settings_popover(PypifyApp *p) {
-  GtkWidget *popover = gtk_popover_new(p->settings_button);
-  GtkWidget *grid = gtk_grid_new();
-  gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
-  gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-  gtk_widget_set_margin_start(grid, 12);
-  gtk_widget_set_margin_end(grid, 12);
-  gtk_widget_set_margin_top(grid, 12);
-  gtk_widget_set_margin_bottom(grid, 12);
-
-  GtkWidget *vol_label = gtk_label_new("Volume");
-  gtk_label_set_xalign(GTK_LABEL(vol_label), 0.0f);
-  p->volume_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
-  gtk_range_set_value(GTK_RANGE(p->volume_scale), 80);
-  gtk_scale_set_draw_value(GTK_SCALE(p->volume_scale), FALSE);
-
-  GtkWidget *speed_label = gtk_label_new("Speed");
-  gtk_label_set_xalign(GTK_LABEL(speed_label), 0.0f);
-  p->speed_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 50, 200, 5);
-  gtk_range_set_value(GTK_RANGE(p->speed_scale), 100);
-  gtk_scale_set_draw_value(GTK_SCALE(p->speed_scale), FALSE);
-
-  GtkWidget *audio_label = gtk_label_new("Audio");
-  gtk_label_set_xalign(GTK_LABEL(audio_label), 0.0f);
-  p->audio_switch = gtk_switch_new();
-  gtk_switch_set_active(GTK_SWITCH(p->audio_switch), TRUE);
-
-  GtkWidget *video_label = gtk_label_new("Video");
-  gtk_label_set_xalign(GTK_LABEL(video_label), 0.0f);
-  p->video_switch = gtk_switch_new();
-  gtk_switch_set_active(GTK_SWITCH(p->video_switch), TRUE);
-
-  gtk_grid_attach(GTK_GRID(grid), vol_label, 0, 0, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), p->volume_scale, 1, 0, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), speed_label, 0, 1, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), p->speed_scale, 1, 1, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), audio_label, 0, 2, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), p->audio_switch, 1, 2, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), video_label, 0, 3, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), p->video_switch, 1, 3, 1, 1);
-
-  g_signal_connect(p->volume_scale, "value-changed", G_CALLBACK(on_range_value_changed), p);
-  g_signal_connect(p->speed_scale, "value-changed", G_CALLBACK(on_range_value_changed), p);
-  g_signal_connect(p->audio_switch, "notify::active", G_CALLBACK(on_switch_active_notify), p);
-  g_signal_connect(p->video_switch, "notify::active", G_CALLBACK(on_switch_active_notify), p);
-
-  gtk_container_add(GTK_CONTAINER(popover), grid);
-  return popover;
+static gchar *format_scale_percent(GtkScale *scale, gdouble value, gpointer user_data) {
+  (void)scale;
+  (void)user_data;
+  return g_strdup_printf("%.0f%%", value);
 }
 
-static GtkWidget *build_header(PypifyApp *p) {
-  GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-  gtk_widget_set_margin_start(bar, 12);
-  gtk_widget_set_margin_end(bar, 12);
-  gtk_widget_set_margin_top(bar, 12);
-  gtk_widget_set_margin_bottom(bar, 8);
+static GtkWidget *build_settings_popover(PypifyApp *p) {
+  GtkWidget *popover = gtk_popover_new();
+  gtk_widget_set_parent(popover, p->settings_button);
+  
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_widget_add_css_class(box, "boxed-list");
+  gtk_widget_set_margin_start(box, 12);
+  gtk_widget_set_margin_end(box, 12);
+  gtk_widget_set_margin_top(box, 12);
+  gtk_widget_set_margin_bottom(box, 12);
 
-  GtkWidget *title = gtk_label_new(NULL);
-  gtk_label_set_markup(GTK_LABEL(title), "<b>Pypify</b>");
-  gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+  // Volume row with scale
+  GtkWidget *vol_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(vol_row), "Volume");
+  p->volume_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 5);
+  gtk_widget_set_size_request(p->volume_scale, 150, -1);
+  gtk_widget_set_valign(p->volume_scale, GTK_ALIGN_CENTER);
+  gtk_range_set_value(GTK_RANGE(p->volume_scale), 80);
+  gtk_scale_set_draw_value(GTK_SCALE(p->volume_scale), TRUE);
+  gtk_scale_set_value_pos(GTK_SCALE(p->volume_scale), GTK_POS_RIGHT);
+  gtk_scale_set_format_value_func(GTK_SCALE(p->volume_scale), format_scale_percent, NULL, NULL);
+  g_signal_connect(p->volume_scale, "value-changed", G_CALLBACK(on_volume_changed), p);
+  adw_action_row_add_suffix(ADW_ACTION_ROW(vol_row), p->volume_scale);
 
-  GtkWidget *spacer = gtk_label_new("");
-  gtk_widget_set_hexpand(spacer, TRUE);
+  // Speed row with scale
+  GtkWidget *speed_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(speed_row), "Speed");
+  p->speed_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 25, 200, 25);
+  gtk_widget_set_size_request(p->speed_scale, 150, -1);
+  gtk_widget_set_valign(p->speed_scale, GTK_ALIGN_CENTER);
+  gtk_range_set_value(GTK_RANGE(p->speed_scale), 100);
+  gtk_scale_set_draw_value(GTK_SCALE(p->speed_scale), TRUE);
+  gtk_scale_set_value_pos(GTK_SCALE(p->speed_scale), GTK_POS_RIGHT);
+  gtk_scale_set_format_value_func(GTK_SCALE(p->speed_scale), format_scale_percent, NULL, NULL);
+  g_signal_connect(p->speed_scale, "value-changed", G_CALLBACK(on_speed_changed), p);
+  gtk_scale_add_mark(GTK_SCALE(p->speed_scale), 100, GTK_POS_BOTTOM, "1x");
+  adw_action_row_add_suffix(ADW_ACTION_ROW(speed_row), p->speed_scale);
 
-  p->open_folder_button = gtk_button_new_with_label("Open Folder");
-  g_signal_connect(p->open_folder_button, "clicked", G_CALLBACK(on_open_folder_clicked), p);
+  // Audio switch row
+  p->audio_switch = adw_switch_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->audio_switch), "Audio");
+  adw_switch_row_set_active(ADW_SWITCH_ROW(p->audio_switch), TRUE);
+  g_signal_connect(p->audio_switch, "notify::active", G_CALLBACK(on_audio_switch_changed), p);
 
-  p->settings_button = gtk_button_new_from_icon_name("emblem-system-symbolic", GTK_ICON_SIZE_BUTTON);
-  gtk_button_set_relief(GTK_BUTTON(p->settings_button), GTK_RELIEF_NONE);
+  // Video switch row
+  p->video_switch = adw_switch_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->video_switch), "Show Video");
+  adw_switch_row_set_active(ADW_SWITCH_ROW(p->video_switch), TRUE);
+  g_signal_connect(p->video_switch, "notify::active", G_CALLBACK(on_video_switch_changed), p);
 
-  p->settings_popover = build_settings_popover(p);
-  g_signal_connect_swapped(p->settings_button, "clicked", G_CALLBACK(gtk_popover_popup), p->settings_popover);
-
-  gtk_box_pack_start(GTK_BOX(bar), title, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(bar), spacer, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(bar), p->open_folder_button, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(bar), p->settings_button, FALSE, FALSE, 0);
-  return bar;
+  // Use a ListBox for proper styling
+  GtkWidget *list = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(list, "boxed-list");
+  gtk_list_box_append(GTK_LIST_BOX(list), vol_row);
+  gtk_list_box_append(GTK_LIST_BOX(list), speed_row);
+  gtk_list_box_append(GTK_LIST_BOX(list), p->audio_switch);
+  gtk_list_box_append(GTK_LIST_BOX(list), p->video_switch);
+  
+  gtk_box_append(GTK_BOX(box), list);
+  gtk_popover_set_child(GTK_POPOVER(popover), box);
+  
+  return popover;
 }
 
 static GtkWidget *build_sidebar(PypifyApp *p) {
   GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  gtk_widget_set_size_request(left, 330, -1);
-  gtk_widget_set_margin_start(left, 10);
+  gtk_widget_set_size_request(left, 320, -1);
+  gtk_widget_set_margin_start(left, 12);
   gtk_widget_set_margin_end(left, 0);
-  gtk_widget_set_margin_top(left, 10);
-  gtk_widget_set_margin_bottom(left, 10);
+  gtk_widget_set_margin_top(left, 12);
+  gtk_widget_set_margin_bottom(left, 12);
 
   p->search_entry = gtk_search_entry_new();
-  gtk_entry_set_placeholder_text(GTK_ENTRY(p->search_entry), "Search songs…");
+  gtk_widget_set_hexpand(p->search_entry, TRUE);
+  g_object_set(p->search_entry, "placeholder-text", "Search songs…", NULL);
   g_signal_connect(p->search_entry, "changed", G_CALLBACK(on_search_changed), p);
 
-  GtkWidget *list_scroller = gtk_scrolled_window_new(NULL, NULL);
-  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(list_scroller), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+  GtkWidget *list_scroller = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(list_scroller), 
+    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_vexpand(list_scroller, TRUE);
 
   p->listbox = gtk_list_box_new();
   gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(p->listbox), TRUE);
+  gtk_widget_add_css_class(p->listbox, "navigation-sidebar");
   g_signal_connect(p->listbox, "row-activated", G_CALLBACK(on_row_activated), p);
-  gtk_container_add(GTK_CONTAINER(list_scroller), p->listbox);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(list_scroller), p->listbox);
 
-  gtk_box_pack_start(GTK_BOX(left), p->search_entry, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(left), list_scroller, TRUE, TRUE, 0);
+  gtk_box_append(GTK_BOX(left), p->search_entry);
+  gtk_box_append(GTK_BOX(left), list_scroller);
   return left;
 }
 
@@ -707,76 +767,90 @@ static GtkWidget *build_center(PypifyApp *p) {
   gtk_label_set_xalign(GTK_LABEL(p->now_playing_label), 0.0f);
   set_now_playing(p, NULL);
 
+  // Video stack with rounded corners and background
   p->video_stack = gtk_stack_new();
   gtk_widget_set_hexpand(p->video_stack, TRUE);
   gtk_widget_set_vexpand(p->video_stack, TRUE);
+  gtk_widget_add_css_class(p->video_stack, "card");
 
-  // Player/video widget are created lazily at first playback.
-  GtkWidget *video_widget = NULL;
-  p->video_widget = NULL;
   p->video_disabled_label = gtk_label_new(
-      "Pick a song to start playback.\nYou can disable video in Settings."
-  );
+      "Click 'Open Folder' to select your music folder\nthen pick a song to start playback.");
   gtk_label_set_justify(GTK_LABEL(p->video_disabled_label), GTK_JUSTIFY_CENTER);
+  gtk_widget_set_hexpand(p->video_disabled_label, TRUE);
+  gtk_widget_set_vexpand(p->video_disabled_label, TRUE);
+  gtk_widget_add_css_class(p->video_disabled_label, "dim-label");
 
-  if (video_widget) {
-    gtk_stack_add_named(GTK_STACK(p->video_stack), video_widget, "video");
-  }
   gtk_stack_add_named(GTK_STACK(p->video_stack), p->video_disabled_label, "disabled");
-  gtk_stack_set_visible_child(GTK_STACK(p->video_stack), video_widget ? video_widget : p->video_disabled_label);
+  gtk_stack_set_visible_child(GTK_STACK(p->video_stack), p->video_disabled_label);
 
+  // Progress bar with drag gesture
   p->progress_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
   gtk_scale_set_draw_value(GTK_SCALE(p->progress_scale), FALSE);
-  gtk_widget_add_events(p->progress_scale, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
-  g_signal_connect(p->progress_scale, "button-press-event", G_CALLBACK(on_progress_button_press), p);
-  g_signal_connect(p->progress_scale, "button-release-event", G_CALLBACK(on_progress_button_release), p);
+  gtk_widget_set_hexpand(p->progress_scale, TRUE);
+  
+  GtkGesture *drag = gtk_gesture_drag_new();
+  g_signal_connect(drag, "drag-begin", G_CALLBACK(on_progress_drag_begin), p);
+  g_signal_connect(drag, "drag-end", G_CALLBACK(on_progress_drag_end), p);
+  gtk_widget_add_controller(p->progress_scale, GTK_EVENT_CONTROLLER(drag));
 
   p->time_label = gtk_label_new("00:00 / 00:00");
   gtk_label_set_xalign(GTK_LABEL(p->time_label), 1.0f);
+  gtk_widget_add_css_class(p->time_label, "caption");
 
-  GtkWidget *progress_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-  gtk_box_pack_start(GTK_BOX(progress_row), p->progress_scale, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(progress_row), p->time_label, FALSE, FALSE, 0);
+  GtkWidget *progress_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_box_append(GTK_BOX(progress_row), p->progress_scale);
+  gtk_box_append(GTK_BOX(progress_row), p->time_label);
 
-  gtk_box_pack_start(GTK_BOX(right), p->now_playing_label, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(right), p->video_stack, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(right), progress_row, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(right), p->now_playing_label);
+  gtk_box_append(GTK_BOX(right), p->video_stack);
+  gtk_box_append(GTK_BOX(right), progress_row);
   return right;
 }
 
 static GtkWidget *build_controls(PypifyApp *p) {
-  GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+  GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_halign(controls, GTK_ALIGN_CENTER);
   gtk_widget_set_margin_start(controls, 12);
   gtk_widget_set_margin_end(controls, 12);
-  gtk_widget_set_margin_top(controls, 0);
-  gtk_widget_set_margin_bottom(controls, 10);
+  gtk_widget_set_margin_top(controls, 8);
+  gtk_widget_set_margin_bottom(controls, 12);
 
-  p->prev_button = gtk_button_new_with_label("Prev");
-  p->back_button = gtk_button_new_with_label("-10s");
-  p->play_pause_button = gtk_button_new_with_label("Play");
-  p->forward_button = gtk_button_new_with_label("+10s");
-  p->next_button = gtk_button_new_with_label("Next");
+  // Media control buttons with icons
+  p->prev_button = gtk_button_new_from_icon_name("media-skip-backward-symbolic");
+  p->back_button = gtk_button_new_from_icon_name("media-seek-backward-symbolic");
+  p->play_pause_button = gtk_button_new_from_icon_name("media-playback-start-symbolic");
+  p->forward_button = gtk_button_new_from_icon_name("media-seek-forward-symbolic");
+  p->next_button = gtk_button_new_from_icon_name("media-skip-forward-symbolic");
 
-  p->shuffle_toggle = gtk_toggle_button_new_with_label("Shuffle");
-  p->repeat_toggle = gtk_toggle_button_new_with_label("Repeat");
+  // Make play button larger
+  gtk_widget_add_css_class(p->play_pause_button, "circular");
+  gtk_widget_add_css_class(p->play_pause_button, "suggested-action");
+
+  // Shuffle and repeat toggle buttons
+  p->shuffle_toggle = gtk_toggle_button_new();
+  gtk_button_set_icon_name(GTK_BUTTON(p->shuffle_toggle), "media-playlist-shuffle-symbolic");
+  gtk_widget_set_tooltip_text(p->shuffle_toggle, "Shuffle");
+  
+  p->repeat_toggle = gtk_toggle_button_new();
+  gtk_button_set_icon_name(GTK_BUTTON(p->repeat_toggle), "media-playlist-repeat-symbolic");
+  gtk_widget_set_tooltip_text(p->repeat_toggle, "Repeat");
 
   g_signal_connect(p->prev_button, "clicked", G_CALLBACK(on_prev_clicked), p);
   g_signal_connect(p->back_button, "clicked", G_CALLBACK(on_skip_back_clicked), p);
   g_signal_connect(p->play_pause_button, "clicked", G_CALLBACK(on_play_pause_clicked), p);
   g_signal_connect(p->forward_button, "clicked", G_CALLBACK(on_skip_forward_clicked), p);
   g_signal_connect(p->next_button, "clicked", G_CALLBACK(on_next_clicked), p);
+  g_signal_connect(p->shuffle_toggle, "toggled", G_CALLBACK(on_shuffle_toggled), p);
+  g_signal_connect(p->repeat_toggle, "toggled", G_CALLBACK(on_repeat_toggled), p);
 
-  gtk_box_pack_start(GTK_BOX(controls), p->prev_button, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(controls), p->back_button, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(controls), p->play_pause_button, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(controls), p->forward_button, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(controls), p->next_button, FALSE, FALSE, 0);
-
-  GtkWidget *spacer = gtk_label_new("");
-  gtk_widget_set_hexpand(spacer, TRUE);
-  gtk_box_pack_start(GTK_BOX(controls), spacer, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(controls), p->shuffle_toggle, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(controls), p->repeat_toggle, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(controls), p->shuffle_toggle);
+  gtk_box_append(GTK_BOX(controls), p->prev_button);
+  gtk_box_append(GTK_BOX(controls), p->back_button);
+  gtk_box_append(GTK_BOX(controls), p->play_pause_button);
+  gtk_box_append(GTK_BOX(controls), p->forward_button);
+  gtk_box_append(GTK_BOX(controls), p->next_button);
+  gtk_box_append(GTK_BOX(controls), p->repeat_toggle);
+  
   return controls;
 }
 
@@ -784,8 +858,10 @@ static GtkWidget *build_main(PypifyApp *p) {
   GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
   GtkWidget *sidebar = build_sidebar(p);
   GtkWidget *center = build_center(p);
-  gtk_paned_pack1(GTK_PANED(paned), sidebar, FALSE, TRUE);
-  gtk_paned_pack2(GTK_PANED(paned), center, TRUE, TRUE);
+  gtk_paned_set_start_child(GTK_PANED(paned), sidebar);
+  gtk_paned_set_end_child(GTK_PANED(paned), center);
+  gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+  gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
   return paned;
 }
 
@@ -811,44 +887,79 @@ static void on_window_destroy(GtkWidget *w, gpointer user_data) {
   }
   g_free(p->current_folder);
   p->current_folder = NULL;
+  
+  pypify_sound_effects_cleanup();
   g_free(p);
 }
 
-PypifyApp *pypify_app_new(GtkApplication *app) {
+PypifyApp *pypify_app_new(AdwApplication *app) {
   gst_init(NULL, NULL);
+  pypify_sound_effects_init();
 
   PypifyApp *p = g_new0(PypifyApp, 1);
   p->app = app;
   p->current_track_index = -1;
   p->is_playing = FALSE;
   p->progress_dragging = FALSE;
-
-  // Lazy-init player on first playback to reduce startup crash surface area.
   p->player = NULL;
 
-  p->window = gtk_application_window_new(app);
+  // Create the main window with AdwApplicationWindow
+  p->window = ADW_APPLICATION_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
   gtk_window_set_title(GTK_WINDOW(p->window), "Pypify");
   gtk_window_set_default_size(GTK_WINDOW(p->window), 1200, 760);
   g_signal_connect(p->window, "destroy", G_CALLBACK(on_window_destroy), p);
 
-  GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-  gtk_container_add(GTK_CONTAINER(p->window), root);
+  // Main layout with header bar
+  GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-  GtkWidget *header = build_header(p);
-  GtkWidget *content = build_main(p);
+  // Create header bar with libadwaita styling
+  p->header_bar = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_header_bar_set_title_widget(p->header_bar, 
+    adw_window_title_new("Pypify", "Media Player"));
+
+  // Open folder button
+  p->open_folder_button = gtk_button_new_with_label("Open Folder");
+  gtk_widget_add_css_class(p->open_folder_button, "suggested-action");
+  g_signal_connect(p->open_folder_button, "clicked", G_CALLBACK(on_open_folder_clicked), p);
+  adw_header_bar_pack_start(p->header_bar, p->open_folder_button);
+
+  // Settings button
+  p->settings_button = gtk_button_new_from_icon_name("emblem-system-symbolic");
+  gtk_widget_set_tooltip_text(p->settings_button, "Settings");
+  g_signal_connect(p->settings_button, "clicked", G_CALLBACK(on_settings_clicked), p);
+  adw_header_bar_pack_end(p->header_bar, p->settings_button);
+  
+  // Build settings popover after settings button exists
+  p->settings_popover = build_settings_popover(p);
+
+  // Toast overlay for notifications
+  p->toast_overlay = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
+
+  // Main content
+  GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  GtkWidget *main_content = build_main(p);
   GtkWidget *controls = build_controls(p);
 
-  p->status_label = gtk_label_new("Choose a folder to begin.");
+  // Status bar
+  p->status_label = gtk_label_new("Click 'Open Folder' to select a music folder.");
   gtk_label_set_xalign(GTK_LABEL(p->status_label), 0.0f);
   gtk_widget_set_margin_start(p->status_label, 12);
   gtk_widget_set_margin_end(p->status_label, 12);
-  gtk_widget_set_margin_top(p->status_label, 0);
-  gtk_widget_set_margin_bottom(p->status_label, 12);
+  gtk_widget_set_margin_top(p->status_label, 4);
+  gtk_widget_set_margin_bottom(p->status_label, 8);
+  gtk_widget_add_css_class(p->status_label, "caption");
+  gtk_widget_add_css_class(p->status_label, "dim-label");
 
-  gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(root), content, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(root), controls, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(root), p->status_label, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(content_box), main_content);
+  gtk_box_append(GTK_BOX(content_box), controls);
+  gtk_box_append(GTK_BOX(content_box), p->status_label);
+
+  adw_toast_overlay_set_child(p->toast_overlay, content_box);
+
+  gtk_box_append(GTK_BOX(main_box), GTK_WIDGET(p->header_bar));
+  gtk_box_append(GTK_BOX(main_box), GTK_WIDGET(p->toast_overlay));
+
+  adw_application_window_set_content(p->window, main_box);
 
   update_play_button(p);
   visible_reset_all(p);
@@ -857,7 +968,5 @@ PypifyApp *pypify_app_new(GtkApplication *app) {
 }
 
 void pypify_app_show(PypifyApp *p) {
-  gtk_widget_show_all(p->window);
-  g_idle_add(open_folder_on_startup, p);
+  gtk_window_present(GTK_WINDOW(p->window));
 }
-
