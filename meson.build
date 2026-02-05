@@ -1,7 +1,7 @@
 project(
   'cpify',
   'c',
-  version: '0.0.1',
+  version: '0.0.2',
   meson_version: '>=0.59.0',
   default_options: [
     'warning_level=2',
@@ -35,11 +35,11 @@ json_glib = dependency('json-glib-1.0', version: '>=1.6')
 
 # Asset paths - use installed path for release, source path for development
 assets_source_dir = meson.current_source_dir() / 'assets'
-assets_install_dir = get_option('datadir') / 'cpify'
+assets_install_dir = join_paths(get_option('datadir'), 'cpify')
 
 conf_data = configuration_data()
 # Use installed path - will be /app/share/cpify in Flatpak, /usr/share/cpify otherwise
-conf_data.set_quoted('CPIFY_ASSETS_DIR', get_option('prefix') / assets_install_dir)
+conf_data.set_quoted('CPIFY_ASSETS_DIR', join_paths(get_option('prefix'), assets_install_dir))
 conf_data.set_quoted('CPIFY_VERSION', meson.project_version())
 conf_data.set_quoted('CPIFY_APP_ID', app_id)
 
