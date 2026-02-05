@@ -332,13 +332,24 @@ static void populate_gallery(CPifyApp *p) {
 
     // Thumbnail - use actual thumbnail if available, otherwise icon
     GtkWidget *thumb;
-    if (t && t->thumbnail) {
+    
+    // Thread-safe thumbnail access
+    g_mutex_lock(&t->thumbnail_mutex);
+    gboolean has_thumbnail = (t && t->thumbnail != NULL);
+    GdkPixbuf *thumbnail_copy = NULL;
+    if (has_thumbnail) {
+      thumbnail_copy = g_object_ref(t->thumbnail);
+    }
+    g_mutex_unlock(&t->thumbnail_mutex);
+    
+    if (has_thumbnail && thumbnail_copy) {
       // Use the actual video thumbnail
-      GdkTexture *texture = gdk_texture_new_for_pixbuf(t->thumbnail);
+      GdkTexture *texture = gdk_texture_new_for_pixbuf(thumbnail_copy);
       thumb = gtk_picture_new_for_paintable(GDK_PAINTABLE(texture));
       gtk_picture_set_content_fit(GTK_PICTURE(thumb), GTK_CONTENT_FIT_COVER);
       gtk_widget_set_size_request(thumb, 160, 100);
       g_object_unref(texture);
+      g_object_unref(thumbnail_copy);
     } else {
       // Use icon based on file type
       const char *icon_name = (t && t->is_video) ? 
@@ -735,55 +746,24 @@ static void on_player_eos(gpointer user_data) {
   play_next(p);
 }
 
-// Thumbnail generation state
-typedef struct {
-  CPifyApp *app;
-  guint current_index;
-} ThumbnailGenState;
-
-static gboolean generate_next_thumbnail(gpointer user_data) {
-  ThumbnailGenState *state = (ThumbnailGenState *)user_data;
-  if (!state || !state->app || !state->app->tracks) {
-    g_free(state);
-    return G_SOURCE_REMOVE;
+// Thumbnail generation callback
+static void on_thumbnail_generated(CPifyTrack *track, gpointer user_data) {
+  CPifyApp *p = (CPifyApp *)user_data;
+  if (!p) return;
+  
+  // Refresh gallery if visible
+  if (p->current_layout == LAYOUT_GALLERY) {
+    populate_gallery(p);
   }
-  
-  CPifyApp *p = state->app;
-  
-  // Find next video track without thumbnail
-  while (state->current_index < p->tracks->len) {
-    CPifyTrack *t = g_ptr_array_index(p->tracks, state->current_index);
-    state->current_index++;
-    
-    if (t && t->is_video && !t->thumbnail) {
-      // Generate thumbnail for this track
-      cpify_track_generate_thumbnail(t);
-      
-      // Refresh gallery if visible
-      if (p->current_layout == LAYOUT_GALLERY) {
-        populate_gallery(p);
-      }
-      
-      // Continue on next idle
-      return G_SOURCE_CONTINUE;
-    }
-  }
-  
-  // All done
-  g_print("[DEBUG] Thumbnail generation complete\n");
-  g_free(state);
-  return G_SOURCE_REMOVE;
 }
 
 static void start_thumbnail_generation(CPifyApp *p) {
   if (!p || !p->tracks) return;
   
-  ThumbnailGenState *state = g_new0(ThumbnailGenState, 1);
-  state->app = p;
-  state->current_index = 0;
+  g_print("[DEBUG] Starting async thumbnail generation for %u tracks\n", p->tracks->len);
   
-  // Use low priority idle to not block UI
-  g_idle_add_full(G_PRIORITY_LOW, generate_next_thumbnail, state, NULL);
+  // Use new batch async API for parallel multicore processing
+  cpify_generate_thumbnails_batch(p->tracks, on_thumbnail_generated, p);
 }
 
 static void load_folder(CPifyApp *p, const gchar *folder) {
@@ -1440,6 +1420,7 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
   g_free(p->current_folder);
   p->current_folder = NULL;
   
+  cpify_thumbnail_cleanup();
   cpify_sound_effects_cleanup();
   cpify_settings_cleanup();
   cpify_updater_cleanup();

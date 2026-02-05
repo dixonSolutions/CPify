@@ -56,6 +56,7 @@ CPifyTrack *cpify_track_new(const gchar *abs_path) {
   t->title = g_path_get_basename(abs_path);
   t->is_video = cpify_is_video_file(abs_path);
   t->thumbnail = NULL;
+  g_mutex_init(&t->thumbnail_mutex);
   return t;
 }
 
@@ -63,16 +64,25 @@ void cpify_track_free(CPifyTrack *track) {
   if (!track) return;
   g_free(track->path);
   g_free(track->title);
+  g_mutex_lock(&track->thumbnail_mutex);
   if (track->thumbnail) {
     g_object_unref(track->thumbnail);
     track->thumbnail = NULL;
   }
+  g_mutex_unlock(&track->thumbnail_mutex);
+  g_mutex_clear(&track->thumbnail_mutex);
   g_free(track);
 }
 
 void cpify_track_generate_thumbnail(CPifyTrack *track) {
   if (!track || !track->path || !track->is_video) return;
-  if (track->thumbnail) return;  // Already have one
+  
+  // Check if thumbnail already exists (thread-safe)
+  g_mutex_lock(&track->thumbnail_mutex);
+  gboolean has_thumbnail = (track->thumbnail != NULL);
+  g_mutex_unlock(&track->thumbnail_mutex);
+  
+  if (has_thumbnail) return;  // Already have one
   
   // Create a pipeline to extract a frame
   GError *err = NULL;
@@ -124,7 +134,10 @@ void cpify_track_generate_thumbnail(CPifyTrack *track) {
     GdkPixbuf *pixbuf = NULL;
     g_object_get(sink, "last-pixbuf", &pixbuf, NULL);
     if (pixbuf) {
+      // Thread-safe assignment
+      g_mutex_lock(&track->thumbnail_mutex);
       track->thumbnail = pixbuf;  // Transfer ownership
+      g_mutex_unlock(&track->thumbnail_mutex);
     }
     gst_object_unref(sink);
   }
@@ -210,5 +223,154 @@ GPtrArray *cpify_scan_folder(const gchar *folder_path, GError **error) {
 
   g_ptr_array_sort(tracks, track_title_cmp);
   return tracks;
+}
+
+// ==== Async Thumbnail Generation ====
+
+// Thread pool for parallel thumbnail generation
+static GThreadPool *thumbnail_thread_pool = NULL;
+static GMutex pool_mutex;
+static gboolean pool_initialized = FALSE;
+
+// Task data for async thumbnail generation
+typedef struct {
+  CPifyTrack *track;
+  CPifyThumbnailCallback callback;
+  gpointer user_data;
+} ThumbnailTask;
+
+// Idle callback to invoke user callback on main thread
+typedef struct {
+  CPifyThumbnailCallback callback;
+  CPifyTrack *track;
+  gpointer user_data;
+} IdleCallbackData;
+
+static gboolean idle_invoke_callback(gpointer data) {
+  IdleCallbackData *icd = (IdleCallbackData *)data;
+  if (icd && icd->callback) {
+    icd->callback(icd->track, icd->user_data);
+  }
+  g_free(icd);
+  return G_SOURCE_REMOVE;
+}
+
+// Worker function that runs in thread pool
+static void thumbnail_worker(gpointer data, gpointer user_data) {
+  (void)user_data; // unused
+  
+  ThumbnailTask *task = (ThumbnailTask *)data;
+  if (!task) return;
+  
+  // Generate thumbnail (this runs in worker thread)
+  cpify_track_generate_thumbnail(task->track);
+  
+  // Schedule callback on main thread
+  if (task->callback) {
+    IdleCallbackData *icd = g_new0(IdleCallbackData, 1);
+    icd->callback = task->callback;
+    icd->track = task->track;
+    icd->user_data = task->user_data;
+    g_idle_add(idle_invoke_callback, icd);
+  }
+  
+  g_free(task);
+}
+
+// Initialize thread pool (call once)
+static void ensure_thread_pool_initialized(void) {
+  g_mutex_lock(&pool_mutex);
+  
+  if (!pool_initialized) {
+    GError *error = NULL;
+    // Create thread pool with max threads = number of CPU cores
+    gint max_threads = g_get_num_processors();
+    // Use at least 2 threads, but cap at 8 to avoid excessive resource usage
+    if (max_threads < 2) max_threads = 2;
+    if (max_threads > 8) max_threads = 8;
+    
+    thumbnail_thread_pool = g_thread_pool_new(
+      thumbnail_worker,
+      NULL,
+      max_threads,
+      FALSE,  // not exclusive
+      &error
+    );
+    
+    if (error) {
+      g_warning("Failed to create thumbnail thread pool: %s", error->message);
+      g_error_free(error);
+    } else {
+      g_print("[DEBUG] Thumbnail thread pool created with %d threads\n", max_threads);
+    }
+    
+    pool_initialized = TRUE;
+  }
+  
+  g_mutex_unlock(&pool_mutex);
+}
+
+void cpify_track_generate_thumbnail_async(CPifyTrack *track,
+                                          CPifyThumbnailCallback callback,
+                                          gpointer user_data) {
+  if (!track || !track->is_video) return;
+  
+  ensure_thread_pool_initialized();
+  
+  if (!thumbnail_thread_pool) {
+    // Fallback to synchronous if pool creation failed
+    cpify_track_generate_thumbnail(track);
+    if (callback) {
+      callback(track, user_data);
+    }
+    return;
+  }
+  
+  ThumbnailTask *task = g_new0(ThumbnailTask, 1);
+  task->track = track;
+  task->callback = callback;
+  task->user_data = user_data;
+  
+  GError *error = NULL;
+  g_thread_pool_push(thumbnail_thread_pool, task, &error);
+  
+  if (error) {
+    g_warning("Failed to push thumbnail task: %s", error->message);
+    g_error_free(error);
+    g_free(task);
+    // Fallback to synchronous
+    cpify_track_generate_thumbnail(track);
+    if (callback) {
+      callback(track, user_data);
+    }
+  }
+}
+
+void cpify_generate_thumbnails_batch(GPtrArray *tracks,
+                                     CPifyThumbnailCallback callback,
+                                     gpointer user_data) {
+  if (!tracks) return;
+  
+  ensure_thread_pool_initialized();
+  
+  // Queue all video tracks for parallel processing
+  for (guint i = 0; i < tracks->len; i++) {
+    CPifyTrack *track = g_ptr_array_index(tracks, i);
+    if (track && track->is_video && !track->thumbnail) {
+      cpify_track_generate_thumbnail_async(track, callback, user_data);
+    }
+  }
+}
+
+void cpify_thumbnail_cleanup(void) {
+  g_mutex_lock(&pool_mutex);
+  
+  if (thumbnail_thread_pool) {
+    g_thread_pool_free(thumbnail_thread_pool, FALSE, TRUE);
+    thumbnail_thread_pool = NULL;
+  }
+  pool_initialized = FALSE;
+  
+  g_mutex_unlock(&pool_mutex);
 }
 
