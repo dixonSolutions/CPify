@@ -23,7 +23,7 @@ void cpify_settings_init(void) {
   
   g_settings = g_new0(CPifySettings, 1);
   
-  // Set defaults
+  // Set defaults - theme is always SYSTEM (not saved)
   g_settings->theme = CPIFY_THEME_SYSTEM;
   g_settings->volume = 80.0;
   g_settings->speed = 100.0;
@@ -37,10 +37,7 @@ void cpify_settings_init(void) {
   GError *err = NULL;
   
   if (g_key_file_load_from_file(kf, get_settings_path(), G_KEY_FILE_NONE, &err)) {
-    // Load values
-    if (g_key_file_has_key(kf, "General", "theme", NULL)) {
-      g_settings->theme = (CPifyTheme)g_key_file_get_integer(kf, "General", "theme", NULL);
-    }
+    // Load values (theme is NOT loaded - always use SYSTEM)
     if (g_key_file_has_key(kf, "General", "layout", NULL)) {
       g_settings->layout = g_key_file_get_integer(kf, "General", "layout", NULL);
     }
@@ -82,8 +79,7 @@ void cpify_settings_save(void) {
   
   GKeyFile *kf = g_key_file_new();
   
-  // General settings
-  g_key_file_set_integer(kf, "General", "theme", (gint)g_settings->theme);
+  // General settings (theme is NOT saved - always use SYSTEM)
   g_key_file_set_integer(kf, "General", "layout", g_settings->layout);
   if (g_settings->last_folder) {
     g_key_file_set_string(kf, "General", "last_folder", g_settings->last_folder);

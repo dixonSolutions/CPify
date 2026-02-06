@@ -227,6 +227,37 @@ CPifyPlayer *cpify_player_new(void) {
     return NULL;
   }
   
+  // Create audio filter bin with scaletempo for pitch preservation during speed changes
+  GstElement *scaletempo = gst_element_factory_make("scaletempo", "scaletempo");
+  if (scaletempo) {
+    GstElement *audioconvert = gst_element_factory_make("audioconvert", "audioconvert");
+    GstElement *audioresample = gst_element_factory_make("audioresample", "audioresample");
+    
+    if (audioconvert && audioresample) {
+      GstElement *audio_bin = gst_bin_new("audio-filter-bin");
+      gst_bin_add_many(GST_BIN(audio_bin), audioconvert, scaletempo, audioresample, NULL);
+      gst_element_link_many(audioconvert, scaletempo, audioresample, NULL);
+      
+      // Add ghost pads to make the bin work as a filter
+      GstPad *sink_pad = gst_element_get_static_pad(audioconvert, "sink");
+      GstPad *src_pad = gst_element_get_static_pad(audioresample, "src");
+      gst_element_add_pad(audio_bin, gst_ghost_pad_new("sink", sink_pad));
+      gst_element_add_pad(audio_bin, gst_ghost_pad_new("src", src_pad));
+      gst_object_unref(sink_pad);
+      gst_object_unref(src_pad);
+      
+      g_object_set(p->pipeline, "audio-filter", audio_bin, NULL);
+      g_print("[DEBUG] Pitch-preserving scaletempo filter enabled\n");
+    } else {
+      if (audioconvert) gst_object_unref(audioconvert);
+      if (audioresample) gst_object_unref(audioresample);
+      gst_object_unref(scaletempo);
+      g_print("[WARNING] Could not create audio filter elements, pitch preservation disabled\n");
+    }
+  } else {
+    g_print("[WARNING] scaletempo element not available, pitch preservation disabled\n");
+  }
+  
   // Set the video sink on playbin
   g_object_set(p->pipeline, "video-sink", p->video_sink, NULL);
   g_object_set(p->pipeline, "volume", p->volume, NULL);

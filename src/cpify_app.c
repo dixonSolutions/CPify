@@ -54,7 +54,6 @@ struct _CPifyApp {
   GtkWidget *sidebar_toggle;
   GtkWidget *open_folder_button;
   GtkWidget *layout_dropdown;
-  GtkWidget *theme_dropdown;
   GtkWidget *settings_button;
   GtkWidget *settings_popover;
 
@@ -475,26 +474,7 @@ static void on_layout_dropdown_changed(GObject *dropdown, GParamSpec *pspec, gpo
   cpify_settings_save();
 }
 
-static void on_theme_dropdown_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec;
-  cpify_play_click_sound();
-  CPifyApp *p = (CPifyApp *)user_data;
-  guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
-  
-  CPifyTheme theme;
-  switch (selected) {
-    case 1: theme = CPIFY_THEME_LIGHT; break;
-    case 2: theme = CPIFY_THEME_DARK; break;
-    default: theme = CPIFY_THEME_SYSTEM; break;
-  }
-  
-  cpify_settings_apply_theme(p->app, theme);
-  
-  // Save theme preference
-  CPifySettings *settings = cpify_settings_get();
-  settings->theme = theme;
-  cpify_settings_save();
-}
+
 
 static void update_video_for_layout(CPifyApp *p) {
   if (!p || !p->video_widget) return;
@@ -1581,14 +1561,6 @@ CPifyApp *cpify_app_new(AdwApplication *app) {
   g_signal_connect(p->layout_dropdown, "notify::selected", G_CALLBACK(on_layout_dropdown_changed), p);
   adw_header_bar_pack_start(p->header_bar, p->layout_dropdown);
 
-  // Theme dropdown (System / Light / Dark)
-  const char *theme_options[] = {"System", "Light", "Dark", NULL};
-  p->theme_dropdown = gtk_drop_down_new_from_strings(theme_options);
-  gtk_drop_down_set_selected(GTK_DROP_DOWN(p->theme_dropdown), 0);
-  gtk_widget_set_tooltip_text(p->theme_dropdown, "Theme");
-  g_signal_connect(p->theme_dropdown, "notify::selected", G_CALLBACK(on_theme_dropdown_changed), p);
-  adw_header_bar_pack_end(p->header_bar, p->theme_dropdown);
-
   // Settings button
   p->settings_button = gtk_button_new_from_icon_name("emblem-system-symbolic");
   gtk_widget_set_tooltip_text(p->settings_button, "Settings");
@@ -1653,14 +1625,8 @@ CPifyApp *cpify_app_new(AdwApplication *app) {
   {
     CPifySettings *s = cpify_settings_get();
     
-    // Apply theme dropdown selection
-    guint theme_idx = 0;
-    switch (s->theme) {
-      case CPIFY_THEME_LIGHT: theme_idx = 1; break;
-      case CPIFY_THEME_DARK: theme_idx = 2; break;
-      default: theme_idx = 0; break;
-    }
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(p->theme_dropdown), theme_idx);
+    // Apply system theme (always)
+    cpify_settings_apply_theme(p->app, CPIFY_THEME_SYSTEM);
     
     // Apply layout
     gtk_drop_down_set_selected(GTK_DROP_DOWN(p->layout_dropdown), (guint)s->layout);
